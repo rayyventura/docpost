@@ -1,0 +1,27 @@
+{
+  "name": "docpost",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "services/*",
+    "workers/*",
+    "web",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "eslint": "latest",
+    "eslint-config-prettier": "latest",
+    "prettier": "latest",
+    "turbo": "latest",
+    "typescript": "latest"
+  }
+}
