@@ -1,0 +1,26 @@
+{
+  "name": "@docpost/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "latest",
+    "jose": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
