@@ -4,16 +4,21 @@ import { eq, and, sql, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
 
-const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
-const AUTH_TOKEN_URL = process.env.AUTH_TOKEN_URL ?? 'http://localhost:3001/token';
-const PLATFORM_URL = process.env.PLATFORM_URL ?? 'http://localhost:3002';
-const SERVICE_CLIENT_ID = process.env.SERVICE_CLIENT_ID ?? 'delivery-worker';
-const SERVICE_CLIENT_SECRET = process.env.SERVICE_CLIENT_SECRET ?? 'delivery-worker-local-secret';
+let _s3: S3Client | undefined;
 
-const s3 = new S3Client({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
-});
+function getS3() {
+  if (!_s3) {
+    _s3 = new S3Client({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
+    });
+  }
+  return _s3;
+}
+
+function env(key: string, fallback: string): string {
+  return process.env[key] ?? fallback;
+}
 
 // ---------- Service token cache ----------
 
@@ -26,13 +31,13 @@ async function getServiceToken(): Promise<string> {
     return cachedToken;
   }
 
-  const res = await fetch(AUTH_TOKEN_URL, {
+  const res = await fetch(env('AUTH_TOKEN_URL', 'http://localhost:3001/auth/token'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      clientId: SERVICE_CLIENT_ID,
-      clientSecret: SERVICE_CLIENT_SECRET,
-      scopes: ['documents:ingest'],
+      clientId: env('SERVICE_CLIENT_ID', 'delivery-worker'),
+      clientSecret: env('SERVICE_CLIENT_SECRET', 'delivery-worker-local-secret'),
+      scope: 'documents:ingest',
     }),
   });
 
@@ -93,7 +98,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
   // HEAD S3 to verify object exists
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: file.s3Key }));
+    await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
   } catch {
     await failTask(
       db,
@@ -104,24 +109,25 @@ export async function processRecord(record: SQSRecord): Promise<void> {
   }
 
   // Get the file from S3
-  const getResult = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: file.s3Key }));
+  const getResult = await getS3().send(new GetObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
   const fileBuffer = await getResult.Body!.transformToByteArray();
 
   // Get service JWT
   const token = await getServiceToken();
 
   // Build multipart form for platform POST /documents
-  const formData = new FormData();
-  formData.append('teamId', claimed.teamId);
-  formData.append('binderId', claimed.binderId);
-  if (claimed.folderId) {
-    formData.append('folderId', claimed.folderId);
-  }
-  formData.append('sourceTaskId', claimed.id);
-  formData.append('name', file.originalName);
-  formData.append('checksumSha256', file.checksumSha256);
-  formData.append('uploadedByUserId', file.ownerUserId);
+  const metadata = JSON.stringify({
+    taskId: claimed.id,
+    binderId: claimed.binderId,
+    folderId: claimed.folderId ?? undefined,
+    name: file.originalName,
+    contentType: file.contentType,
+    checksumSha256: file.checksumSha256,
+    onBehalfOf: file.ownerUserId,
+  });
 
+  const formData = new FormData();
+  formData.append('metadata', metadata);
   const blob = new Blob([fileBuffer], { type: file.contentType });
   formData.append('file', blob, file.originalName);
 
@@ -130,7 +136,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
   const timer = setTimeout(() => controller.abort(), 30_000);
 
   try {
-    const res = await fetch(`${PLATFORM_URL}/documents`, {
+    const res = await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
@@ -140,17 +146,17 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     clearTimeout(timer);
 
     if (res.status === 201 || res.status === 200) {
-      const body = (await res.json()) as { id: string };
+      const body = (await res.json()) as { documentId: string };
       await db
         .update(tasks)
         .set({
           status: 'completed',
-          platformDocumentId: body.id,
+          platformDocumentId: body.documentId,
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, claimed.id));
 
-      console.log(`Task ${taskId} completed, document ${body.id}`);
+      console.log(`Task ${taskId} completed, document ${body.documentId}`);
       await maybeCompleteJob(db, claimed.jobId);
       return;
     }

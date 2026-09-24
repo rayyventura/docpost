@@ -5,21 +5,32 @@ import { eq, and, sql } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
 
-const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
-const JOB_QUEUE_URL = process.env.JOB_QUEUE_URL
-  ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-jobs';
-const TASK_QUEUE_URL = process.env.TASK_QUEUE_URL
-  ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks';
+let _s3: S3Client | undefined;
+let _sqs: SQSClient | undefined;
 
-const s3 = new S3Client({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
-});
+function getS3() {
+  if (!_s3) {
+    _s3 = new S3Client({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
+    });
+  }
+  return _s3;
+}
 
-const sqs = new SQSClient({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.SQS_ENDPOINT && { endpoint: process.env.SQS_ENDPOINT }),
-});
+function getSqs() {
+  if (!_sqs) {
+    _sqs = new SQSClient({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      ...(process.env.SQS_ENDPOINT && { endpoint: process.env.SQS_ENDPOINT }),
+    });
+  }
+  return _sqs;
+}
+
+function env(key: string, fallback: string): string {
+  return process.env[key] ?? fallback;
+}
 
 export async function processRecord(record: SQSRecord): Promise<void> {
   const { jobId } = JSON.parse(record.body) as { jobId: string };
@@ -51,7 +62,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     // HEAD S3 to check if file exists
     let exists = false;
     try {
-      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: file.s3Key }));
+      await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
       exists = true;
     } catch {
       exists = false;
@@ -75,9 +86,9 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
         for (let i = 0; i < pendingTasks.length; i += 10) {
           const batch = pendingTasks.slice(i, i + 10);
-          await sqs.send(
+          await getSqs().send(
             new SendMessageBatchCommand({
-              QueueUrl: TASK_QUEUE_URL,
+              QueueUrl: env('TASK_QUEUE_URL', 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks'),
               Entries: batch.map((t, idx) => ({
                 Id: String(idx),
                 MessageBody: JSON.stringify({ taskId: t.id }),
@@ -142,9 +153,9 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     .returning({ id: jobs.id });
 
   if (updated) {
-    await sqs.send(
+    await getSqs().send(
       new SendMessageCommand({
-        QueueUrl: JOB_QUEUE_URL,
+        QueueUrl: env('JOB_QUEUE_URL', 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-jobs'),
         MessageBody: JSON.stringify({ jobId }),
         DelaySeconds: 60,
       }),
