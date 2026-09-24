@@ -1,0 +1,58 @@
+name: Deploy Web SPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'packages/shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web/**'
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: npx turbo lint --filter=@docpost/web
+      - run: npx turbo test --filter=@docpost/web
+      - run: npx turbo typecheck --filter=@docpost/web
+
+  build-deploy:
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - name: Build SPA
+        run: npx turbo build --filter=@docpost/web
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy to S3 + invalidate CloudFront
+        run: |
+          aws s3 sync web/dist/ s3://${{ secrets.SPA_BUCKET_NAME }}/ --delete
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
