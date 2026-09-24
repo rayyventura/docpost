@@ -7,12 +7,14 @@ on:
       - 'services/auth/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-auth.yml'
+      - 'turbo.json'
   pull_request:
     branches: [main]
     paths:
       - 'services/auth/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-auth.yml'
+      - 'turbo.json'
 
 env:
   AWS_REGION: us-east-1

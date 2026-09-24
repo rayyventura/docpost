@@ -7,11 +7,13 @@ on:
       - 'web/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-web.yml'
+      - 'turbo.json'
   pull_request:
     branches: [main]
     paths:
       - 'web/**'
       - '.github/workflows/deploy-web.yml'
+      - 'turbo.json'
 
 env:
   AWS_REGION: us-east-1

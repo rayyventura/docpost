@@ -6,11 +6,13 @@ on:
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - 'turbo.json'
   pull_request:
     branches: [main]
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - 'turbo.json'
 
 env:
   AWS_REGION: us-east-1
