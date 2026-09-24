@@ -53,7 +53,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
           sf.status = 'ready';
         } catch {
           sf.status = 'error';
-          sf.error = 'Failed to compute checksum';
+          sf.error = 'Failed to process file';
         }
       }
       // Trigger re-render with updated hashes
@@ -101,7 +101,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
         />
         <p>Drop files here or click to browse</p>
         <p className="drop-zone-hint">
-          PDF, DOCX, XLSX, PNG, JPG — up to 1 GB each — {MAX_FILES - files.length} remaining
+          PDF, DOCX, XLSX, PNG, JPG. Up to 1 GB each. {MAX_FILES - files.length} remaining
         </p>
       </div>
 
@@ -112,7 +112,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
               <span className="file-name">{f.file.name}</span>
               <span className="file-size">{formatSize(f.file.size)}</span>
               <span className="file-status">
-                {f.status === 'hashing' && 'Computing checksum...'}
+                {f.status === 'hashing' && 'Preparing...'}
                 {f.status === 'ready' && 'Ready'}
                 {f.status === 'uploading' && `${f.progress}%`}
                 {f.status === 'uploaded' && 'Uploaded'}

@@ -1,11 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { eq, and, sql, desc, inArray } from 'drizzle-orm';
 import { requireUserAuth } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { jobs, files, tasks } from '../db/schema.js';
 import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
+import { visibleSubmitterIds } from '../lib/access.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
 
 const router = Router();
@@ -86,6 +87,11 @@ async function getServiceToken(): Promise<string> {
 }
 
 // ---------- Helpers ----------
+
+function bearerToken(req: Request): string {
+  const header = req.headers.authorization ?? '';
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
+}
 
 async function checkTeamMembership(
   teamId: string,
@@ -232,11 +238,12 @@ router.get('/jobs', requireUserAuth, async (req: Request, res: Response, next: N
     const offset = (page - 1) * limit;
 
     const db = getDb();
+    const submitterIds = [...(await visibleSubmitterIds(userId, bearerToken(req)))];
 
     const jobRows = await db
       .select()
       .from(jobs)
-      .where(eq(jobs.submittedByUserId, userId))
+      .where(inArray(jobs.submittedByUserId, submitterIds))
       .orderBy(desc(jobs.createdAt))
       .limit(limit)
       .offset(offset);
@@ -294,9 +301,14 @@ router.get('/jobs/:id', requireUserAuth, async (req: Request, res: Response, nex
     const [job] = await db
       .select()
       .from(jobs)
-      .where(sql`${jobs.id} = ${req.params.id} AND ${jobs.submittedByUserId} = ${userId}`);
+      .where(eq(jobs.id, req.params.id as string));
 
     if (!job) {
+      throw new NotFoundError('Job not found');
+    }
+
+    const submitterIds = await visibleSubmitterIds(userId, bearerToken(req));
+    if (!submitterIds.has(job.submittedByUserId)) {
       throw new NotFoundError('Job not found');
     }
 
@@ -334,13 +346,17 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
     const userId = req.user!.sub;
     const db = getDb();
 
-    // Verify job ownership
     const [job] = await db
-      .select({ id: jobs.id })
+      .select({ id: jobs.id, submittedByUserId: jobs.submittedByUserId })
       .from(jobs)
-      .where(sql`${jobs.id} = ${req.params.id} AND ${jobs.submittedByUserId} = ${userId}`);
+      .where(eq(jobs.id, req.params.id as string));
 
     if (!job) {
+      throw new NotFoundError('Job not found');
+    }
+
+    const submitterIds = await visibleSubmitterIds(userId, bearerToken(req));
+    if (!submitterIds.has(job.submittedByUserId)) {
       throw new NotFoundError('Job not found');
     }
 

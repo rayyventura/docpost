@@ -2,8 +2,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { eq, sql } from 'drizzle-orm';
 import { requireUserAuth } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
-import { files } from '../db/schema.js';
-import { initiateMultipartUpload, resignMultipartParts } from '../lib/s3.js';
+import { files, jobs } from '../db/schema.js';
+import { initiateMultipartUpload, resignMultipartParts, presignDownload } from '../lib/s3.js';
+import { visibleSubmitterIds } from '../lib/access.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '@docpost/shared';
 
 const router = Router();
@@ -43,6 +44,40 @@ router.post('/files/:fileId/multipart', requireUserAuth, async (req: Request, re
       const result = await initiateMultipartUpload(file.s3Key, file.contentType, sizeBytes);
       res.json(result);
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/files/:fileId/download-url', requireUserAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.sub;
+    const fileId = req.params.fileId as string;
+    const header = req.headers.authorization ?? '';
+    const userToken = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const db = getDb();
+
+    const [row] = await db
+      .select({
+        s3Key: files.s3Key,
+        status: files.status,
+        submittedByUserId: jobs.submittedByUserId,
+      })
+      .from(files)
+      .innerJoin(jobs, eq(files.jobId, jobs.id))
+      .where(eq(files.id, fileId));
+
+    if (!row || row.status !== 'uploaded') {
+      throw new NotFoundError('File not found');
+    }
+
+    const submitterIds = await visibleSubmitterIds(userId, userToken);
+    if (!submitterIds.has(row.submittedByUserId)) {
+      throw new NotFoundError('File not found');
+    }
+
+    const url = await presignDownload(row.s3Key);
+    res.json({ url, expiresIn: 120 });
   } catch (err) {
     next(err);
   }

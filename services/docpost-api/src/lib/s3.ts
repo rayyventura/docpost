@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
@@ -15,6 +15,16 @@ const s3 = new S3Client({
 });
 
 export { s3, BUCKET };
+
+const DOWNLOAD_EXPIRY = 120;
+
+export async function presignDownload(s3Key: string): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: s3Key,
+  });
+  return getSignedUrl(s3, command, { expiresIn: DOWNLOAD_EXPIRY });
+}
 
 export interface SingleUploadPlan {
   fileId: string;

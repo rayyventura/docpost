@@ -28,7 +28,6 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
   }, []);
 
   const readyFiles = files.filter((f) => f.status === 'ready');
-  const taskCount = readyFiles.length * destinations.length;
   const canSubmit = readyFiles.length > 0 && destinations.length > 0 && !submitting;
 
   const handleSubmit = useCallback(async () => {
@@ -94,8 +93,6 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
 
   return (
     <div className="new-job-page">
-      <h2>New Distribution</h2>
-
       <div className="distribute-panels">
         <div className="panel-left">
           <DestinationTree selected={destinations} onChange={setDestinations} />
@@ -135,17 +132,8 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="job-actions">
-        <div className="action-summary">
-          {readyFiles.length > 0 && destinations.length > 0 && (
-            <span className="task-count-label">
-              {readyFiles.length} file{readyFiles.length !== 1 ? 's' : ''} &times;{' '}
-              {destinations.length} destination{destinations.length !== 1 ? 's' : ''} ={' '}
-              <strong>{taskCount} tasks</strong>
-            </span>
-          )}
-        </div>
         <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-          {submitting ? 'Submitting...' : `Send${taskCount > 0 ? ` (${taskCount} tasks)` : ''}`}
+          {submitting ? 'Sending...' : 'Send'}
         </button>
       </div>
     </div>

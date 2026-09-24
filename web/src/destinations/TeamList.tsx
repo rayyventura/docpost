@@ -4,7 +4,6 @@ import { apiRequest } from '../api/client';
 interface Team {
   id: string;
   name: string;
-  region: string;
 }
 
 interface TeamListProps {
@@ -63,7 +62,6 @@ export function TeamList({ onSelect }: TeamListProps) {
             <span className="item-icon" aria-hidden="true">&#x1F465;</span>
             <div className="item-info">
               <span className="item-name">{team.name}</span>
-              <span className="item-badge">{team.region}</span>
             </div>
           </button>
         </li>

@@ -31,7 +31,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     headers,
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 && !path.startsWith('/auth/')) {
     clearToken();
     window.location.href = '/login';
     throw new Error('Unauthorized');

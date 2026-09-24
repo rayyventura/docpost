@@ -76,7 +76,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     // Verify size matches declared value
     const declaredSize = Number(file.sizeBytes);
     if (actualSize !== declaredSize) {
-      const reason = `Size mismatch: declared ${declaredSize}, actual ${actualSize}`;
+      const reason = `SIZE_MISMATCH ${JSON.stringify({ fileName: file.originalName, declaredSize, actualSize })}`;
       console.log(`File ${file.id}: ${reason}`);
       await db
         .update(files)

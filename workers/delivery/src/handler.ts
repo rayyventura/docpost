@@ -3,6 +3,7 @@ import { S3Client, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
+import { pushTaskUpdate } from './notify.js';
 
 let _s3: S3Client | undefined;
 
@@ -18,6 +19,10 @@ function getS3() {
 
 function env(key: string, fallback: string): string {
   return process.env[key] ?? fallback;
+}
+
+function failureReason(code: string, values: Record<string, string>): string {
+  return `${code} ${JSON.stringify(values)}`;
 }
 
 // ---------- Service token cache ----------
@@ -80,6 +85,10 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     )
     .returning();
 
+  if (claimed) {
+    await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'in_progress' });
+  }
+
   if (!claimed) {
     console.log(`Task ${taskId} already in terminal state, skipping`);
     return;
@@ -103,7 +112,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     await failTask(
       db,
       claimed,
-      `FILE_NOT_UPLOADED: ${file.originalName} not found in staging`,
+      failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
     );
     return;
   }
@@ -157,6 +166,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
         .where(eq(tasks.id, claimed.id));
 
       console.log(`Task ${taskId} completed, document ${body.documentId}`);
+      await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'completed' });
       await maybeCompleteJob(db, claimed.jobId);
       return;
     }
@@ -165,7 +175,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       await failTask(
         db,
         claimed,
-        `NOT_AUTHORIZED_AT_DELIVERY: ${file.originalName} → team ${claimed.teamId}/binder ${claimed.binderId}`,
+        failureReason('NOT_AUTHORIZED_AT_DELIVERY', { fileName: file.originalName }),
       );
       return;
     }
@@ -174,7 +184,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       await failTask(
         db,
         claimed,
-        `CHECKSUM_MISMATCH: ${file.originalName} → team ${claimed.teamId}/binder ${claimed.binderId}`,
+        failureReason('CHECKSUM_MISMATCH', { fileName: file.originalName }),
       );
       return;
     }
@@ -200,6 +210,12 @@ async function failTask(
     .where(eq(tasks.id, task.id));
 
   console.log(`Task ${task.id} failed: ${reason}`);
+  await pushTaskUpdate({
+    jobId: task.jobId,
+    taskId: task.id,
+    status: 'failed',
+    failureReason: reason,
+  });
   await maybeCompleteJob(db, task.jobId);
 }
 

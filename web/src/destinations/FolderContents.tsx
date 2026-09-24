@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
+import { formatDate } from '../formatDate';
 
 interface Folder {
   id: string;
@@ -32,14 +33,6 @@ function formatFileSize(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const size = bytes / Math.pow(k, i);
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
 }
 
 function contentTypeIcon(contentType: string): string {

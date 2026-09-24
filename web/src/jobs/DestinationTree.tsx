@@ -5,7 +5,6 @@ import type { Destination } from './types';
 interface Team {
   id: string;
   name: string;
-  region: string;
 }
 
 interface Binder {
@@ -314,7 +313,6 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
                   )}
                 </button>
                 <span className="tree-name tree-name-team">{team.name}</span>
-                <span className="tree-meta">{team.region}</span>
               </div>
 
               {isExpanded &&

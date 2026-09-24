@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "latest",
     "@aws-sdk/client-s3": "latest",
     "@aws-sdk/client-sqs": "latest",
     "@docpost/shared": "*",
