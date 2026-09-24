@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'services/platform/**'
+      - 'scripts/ci-deploy-service.sh'
       - 'packages/shared/**'
       - '.github/workflows/deploy-platform.yml'
       - 'turbo.json'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'services/platform/**'
+      - 'scripts/ci-deploy-service.sh'
       - 'packages/shared/**'
       - '.github/workflows/deploy-platform.yml'
       - 'turbo.json'
