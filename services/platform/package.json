@@ -1,0 +1,37 @@
+{
+  "name": "@docpost/platform",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:seed": "tsx src/db/seed.ts"
+  },
+  "dependencies": {
+    "@docpost/shared": "*",
+    "dotenv": "latest",
+    "drizzle-orm": "latest",
+    "express": "latest",
+    "jose": "latest",
+    "multer": "latest",
+    "pg": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/multer": "latest",
+    "@types/pg": "latest",
+    "drizzle-kit": "latest",
+    "tsx": "latest",
+    "vitest": "latest"
+  }
+}
