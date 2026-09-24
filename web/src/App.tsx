@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { LoginPage } from './auth/LoginPage';
 import { RegisterPage } from './auth/RegisterPage';
-import { DestinationsPage } from './destinations/DestinationsPage';
 import { DistributePage } from './jobs/DistributePage';
 import { Layout } from './layout/Layout';
 import type { ReactNode } from 'react';
@@ -49,14 +48,6 @@ export function App() {
             element={
               <ProtectedRoute>
                 <DistributePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/destinations"
-            element={
-              <ProtectedRoute>
-                <DestinationsPage />
               </ProtectedRoute>
             }
           />
