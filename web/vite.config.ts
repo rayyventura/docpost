@@ -10,6 +10,7 @@ export default defineConfig({
       '/destinations': 'http://localhost:3003',
       '/jobs': 'http://localhost:3003',
       '/files': 'http://localhost:3003',
+      '/ws': { target: 'http://localhost:3004', ws: true },
     },
   },
 });

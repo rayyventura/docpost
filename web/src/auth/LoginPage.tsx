@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from './AuthContext';
+import { PasswordInput } from './PasswordInput';
 import { Link, useNavigate } from 'react-router-dom';
 
 export function LoginPage() {
@@ -50,9 +51,8 @@ export function LoginPage() {
 
           <div className="form-field">
             <label htmlFor="password">Password</label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Your password"
@@ -60,6 +60,10 @@ export function LoginPage() {
               autoComplete="current-password"
             />
           </div>
+
+          <p className="auth-forgot">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </p>
 
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}

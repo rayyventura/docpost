@@ -6,6 +6,7 @@ import { errorHandler } from '@docpost/shared';
 import { initKeys, getKid } from './crypto/keys.js';
 import registerRouter from './routes/register.js';
 import loginRouter from './routes/login.js';
+import passwordResetRouter from './routes/password-reset.js';
 import tokenRouter from './routes/token.js';
 import jwksRouter from './routes/jwks.js';
 
@@ -25,6 +26,7 @@ app.get('/health', (_req, res) => {
 // Mount routes
 app.use(registerRouter);
 app.use(loginRouter);
+app.use(passwordResetRouter);
 app.use(tokenRouter);
 app.use(jwksRouter);
 

@@ -23,6 +23,7 @@
     "drizzle-orm": "latest",
     "express": "latest",
     "jose": "latest",
+    "nodemailer": "^10.0.10",
     "pg": "latest",
     "zod": "latest"
   },

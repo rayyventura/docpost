@@ -5,7 +5,6 @@ import type { Destination } from './types';
 interface Team {
   id: string;
   name: string;
-  region: string;
 }
 
 interface Binder {

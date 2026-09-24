@@ -2,22 +2,39 @@ import { useState, useCallback } from 'react';
 import { NewJobPage } from './NewJobPage';
 import { JobDashboard } from './JobDashboard';
 
-type View = { mode: 'new' } | { mode: 'dashboard'; jobId?: string };
+type Tab = 'new' | 'deliveries';
 
 export function DistributePage() {
-  const [view, setView] = useState<View>({ mode: 'new' });
+  const [activeTab, setActiveTab] = useState<Tab>('new');
+  const [focusJobId, setFocusJobId] = useState<string | undefined>();
 
   const handleJobCreated = useCallback((jobId: string) => {
-    setView({ mode: 'dashboard', jobId });
+    setFocusJobId(jobId);
+    setActiveTab('deliveries');
   }, []);
 
-  const handleNewDistribution = useCallback(() => {
-    setView({ mode: 'new' });
-  }, []);
+  return (
+    <div className="distribute-page">
+      <div className="page-tabs">
+        <button
+          className={`page-tab ${activeTab === 'new' ? 'page-tab--active' : ''}`}
+          onClick={() => setActiveTab('new')}
+        >
+          New Distribution
+        </button>
+        <button
+          className={`page-tab ${activeTab === 'deliveries' ? 'page-tab--active' : ''}`}
+          onClick={() => {
+            setFocusJobId(undefined);
+            setActiveTab('deliveries');
+          }}
+        >
+          Deliveries
+        </button>
+      </div>
 
-  if (view.mode === 'dashboard') {
-    return <JobDashboard jobId={view.jobId} onBack={handleNewDistribution} />;
-  }
-
-  return <NewJobPage onJobCreated={handleJobCreated} />;
+      {activeTab === 'new' && <NewJobPage onJobCreated={handleJobCreated} />}
+      {activeTab === 'deliveries' && <JobDashboard jobId={focusJobId} />}
+    </div>
+  );
 }

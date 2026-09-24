@@ -32,6 +32,7 @@ async function seed() {
     { id: '00000000-0000-0000-0000-000000000001', email: 'alice@example.com', password: 'password123', name: 'Alice Johnson' },
     { id: '00000000-0000-0000-0000-000000000002', email: 'bob@example.com', password: 'password123', name: 'Bob Smith' },
     { id: '00000000-0000-0000-0000-000000000003', email: 'carol@example.com', password: 'password123', name: 'Carol Williams' },
+    { id: '00000000-0000-0000-0000-000000000004', email: 'rayyventura@gmail.com', password: 'password123', name: 'Rayane Ventura' },
   ];
 
   for (const testUser of testUsers) {

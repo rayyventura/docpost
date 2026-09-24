@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from './AuthContext';
+import { PasswordInput } from './PasswordInput';
 import { Link, useNavigate } from 'react-router-dom';
 
 export function RegisterPage() {
@@ -82,9 +83,8 @@ export function RegisterPage() {
 
           <div className="form-field">
             <label htmlFor="password">Password</label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
@@ -96,9 +96,8 @@ export function RegisterPage() {
 
           <div className="form-field">
             <label htmlFor="confirmPassword">Confirm Password</label>
-            <input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Repeat your password"

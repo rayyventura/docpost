@@ -5,16 +5,25 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/handler.ts --bundle --platform=node --target=node22 --outfile=dist/handler.js --external:@aws-sdk/*",
+    "dev": "tsx watch src/dev.ts",
     "lint": "eslint src/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@docpost/shared": "*"
+    "@docpost/shared": "*",
+    "dotenv": "latest",
+    "drizzle-orm": "latest",
+    "jose": "latest",
+    "pg": "latest",
+    "ws": "latest"
   },
   "devDependencies": {
     "@types/aws-lambda": "latest",
+    "@types/pg": "latest",
+    "@types/ws": "latest",
     "esbuild": "latest",
+    "tsx": "latest",
     "vitest": "latest"
   }
 }

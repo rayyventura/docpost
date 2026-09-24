@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "intl-messageformat": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest"

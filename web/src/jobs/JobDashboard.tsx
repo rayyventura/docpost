@@ -1,13 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiRequest } from '../api/client';
 import type { JobSummary, TaskDetail } from './types';
+import { formatFailureReason } from './failureMessages';
+import { formatDate } from '../formatDate';
 
 interface JobDashboardProps {
   jobId?: string;
-  onBack: () => void;
 }
 
-export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
+function aggregateStatus(counts: JobSummary['counts']): string {
+  const total = counts.pending + counts.in_progress + counts.completed + counts.failed;
+  if (total === 0 || counts.pending === total) return 'pending';
+  if (counts.completed === total) return 'completed';
+  if (counts.failed > 0 && counts.pending === 0 && counts.in_progress === 0) return 'failed';
+  return 'in_progress';
+}
+
+export function JobDashboard({ jobId }: JobDashboardProps) {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(jobId ?? null);
   const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null);
@@ -46,12 +55,78 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
       setLoading(false);
     };
 
-    loadJob();
+    void loadJob();
 
-    // Poll while job is in progress
-    const interval = setInterval(loadJob, 3000);
+    const interval = setInterval(() => void loadJob(), 15000);
     return () => clearInterval(interval);
   }, [selectedJobId, taskPage, statusFilter]);
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+
+    const token = sessionStorage.getItem('accessToken');
+    if (!token) return;
+
+    let socket: WebSocket | null = null;
+    let closed = false;
+    let attempt = 0;
+    let timer = 0;
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(`${protocol}://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+
+      socket.onopen = () => {
+        attempt = 0;
+        socket?.send(JSON.stringify({ action: 'subscribe', jobId: selectedJobId }));
+      };
+
+      socket.onmessage = (event) => {
+        const message = JSON.parse(event.data as string) as {
+          type?: string;
+          jobId?: string;
+          taskId?: string;
+          status?: string;
+          failureReason?: string;
+          counts?: JobSummary['counts'];
+        };
+        if (message.type === 'subscribed') {
+          void apiRequest<JobSummary>(`/jobs/${selectedJobId}`).then(setSelectedJob).catch(console.error);
+          return;
+        }
+        if (message.type !== 'task_update' || message.jobId !== selectedJobId) return;
+
+        if (message.taskId && message.status) {
+          setTasks((current) => current.map((task) => (
+            task.taskId === message.taskId
+              ? { ...task, status: message.status ?? task.status, failureReason: message.failureReason ?? task.failureReason }
+              : task
+          )));
+        }
+        if (message.counts) {
+          setSelectedJob((current) => current ? {
+            ...current,
+            counts: message.counts ?? current.counts,
+            aggregateStatus: aggregateStatus(message.counts ?? current.counts),
+          } : current);
+        }
+      };
+
+      socket.onclose = () => {
+        if (closed) return;
+        const delay = Math.min(1000 * 2 ** attempt, 10000);
+        attempt += 1;
+        timer = window.setTimeout(connect, delay);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      window.clearTimeout(timer);
+      socket?.close();
+    };
+  }, [selectedJobId]);
 
   const handleSelectJob = useCallback((id: string) => {
     setSelectedJobId(id);
@@ -59,17 +134,16 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
     setStatusFilter('');
   }, []);
 
+  const downloadFile = useCallback(async (fileId: string) => {
+    const data = await apiRequest<{ url: string }>(`/files/${fileId}/download-url`, { method: 'POST' });
+    window.open(data.url, '_blank', 'noopener');
+  }, []);
+
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
-        <div className="dashboard-header">
-          <h2>Distribution Jobs</h2>
-          <button className="btn btn-primary" onClick={onBack}>
-            New Distribution
-          </button>
-        </div>
         {jobs.length === 0 ? (
-          <p className="empty-state">No jobs yet</p>
+          <p className="empty-state">No deliveries yet</p>
         ) : (
           <ul className="job-list">
             {jobs.map((j) => (
@@ -79,11 +153,11 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
                     {j.aggregateStatus}
                   </span>
                   <span className="job-date">
-                    {new Date(j.createdAt).toLocaleString()}
+                    {formatDate(j.createdAt, true)}
                   </span>
                 </div>
                 <div className="job-item-counts">
-                  {j.taskCount} tasks — {j.counts.completed} done, {j.counts.failed} failed,{' '}
+                  {j.taskCount} items. {j.counts.completed} done, {j.counts.failed} failed,{' '}
                   {j.counts.pending + j.counts.in_progress} remaining
                 </div>
               </li>
@@ -98,9 +172,9 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
     <div className="job-dashboard">
       <div className="dashboard-header">
         <button className="btn" onClick={() => setSelectedJobId(null)}>
-          &larr; All Jobs
+          &larr; All Deliveries
         </button>
-        <h2>Job Details</h2>
+        <h2>Delivery Details</h2>
       </div>
 
       {selectedJob && (
@@ -109,8 +183,8 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
             <span className={`status-badge status-${selectedJob.aggregateStatus}`}>
               {selectedJob.aggregateStatus}
             </span>
-            <span>{selectedJob.taskCount} total tasks</span>
-            <span>{new Date(selectedJob.createdAt).toLocaleString()}</span>
+            <span>{selectedJob.taskCount} total items</span>
+            <span>{formatDate(selectedJob.createdAt, true)}</span>
           </div>
           <div className="counts-bar">
             {selectedJob.counts.completed > 0 && (
@@ -194,9 +268,11 @@ export function JobDashboard({ jobId, onBack }: JobDashboardProps) {
                 </td>
                 <td>{t.attemptCount}</td>
                 <td>
-                  {t.failureReason && <span className="failure-reason">{t.failureReason}</span>}
-                  {t.platformDocumentId && (
-                    <span className="doc-id">Doc: {t.platformDocumentId.slice(0, 8)}</span>
+                  {t.failureReason && <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>}
+                  {t.status === 'completed' && (
+                    <button type="button" className="btn btn-sm" onClick={() => void downloadFile(t.fileId)}>
+                      Download
+                    </button>
                   )}
                 </td>
               </tr>

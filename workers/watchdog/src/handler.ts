@@ -110,7 +110,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
         .update(tasks)
         .set({
           status: 'failed',
-          failureReason: `FILE_NOT_UPLOADED: ${file.originalName} was not uploaded before the staging deadline`,
+          failureReason: `FILE_NOT_UPLOADED ${JSON.stringify({ fileName: file.originalName, reason: 'deadline' })}`,
           updatedAt: now,
         })
         .where(and(eq(tasks.fileId, file.id), eq(tasks.status, 'pending')));
