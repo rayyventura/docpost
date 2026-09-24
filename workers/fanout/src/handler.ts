@@ -5,19 +5,28 @@ import { eq, and, sql } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks } from './schema.js';
 
-const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
-const TASK_QUEUE_URL = process.env.TASK_QUEUE_URL
-  ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks';
+let _s3: S3Client | undefined;
+let _sqs: SQSClient | undefined;
 
-const s3 = new S3Client({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
-});
+function getS3() {
+  if (!_s3) {
+    _s3 = new S3Client({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true }),
+    });
+  }
+  return _s3;
+}
 
-const sqs = new SQSClient({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-  ...(process.env.SQS_ENDPOINT && { endpoint: process.env.SQS_ENDPOINT }),
-});
+function getSqs() {
+  if (!_sqs) {
+    _sqs = new SQSClient({
+      region: process.env.AWS_REGION ?? 'us-east-1',
+      ...(process.env.SQS_ENDPOINT && { endpoint: process.env.SQS_ENDPOINT }),
+    });
+  }
+  return _sqs;
+}
 
 export async function processRecord(record: SQSRecord): Promise<void> {
   // Parse S3 event notification from SQS message body
@@ -57,7 +66,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     // HEAD the S3 object to verify size
     let actualSize: number;
     try {
-      const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: s3Key }));
+      const head = await getS3().send(new HeadObjectCommand({ Bucket: process.env.S3_BUCKET ?? 'docpost-staging-local', Key: s3Key }));
       actualSize = head.ContentLength ?? 0;
     } catch (err) {
       console.error(`Failed to HEAD object ${s3Key}:`, err);
@@ -104,9 +113,9 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     // Enqueue tasks in batches of 10 (SQS SendMessageBatch limit)
     for (let i = 0; i < pendingTasks.length; i += 10) {
       const batch = pendingTasks.slice(i, i + 10);
-      await sqs.send(
+      await getSqs().send(
         new SendMessageBatchCommand({
-          QueueUrl: TASK_QUEUE_URL,
+          QueueUrl: process.env.TASK_QUEUE_URL ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks',
           Entries: batch.map((t, idx) => ({
             Id: String(idx),
             MessageBody: JSON.stringify({ taskId: t.id }),
