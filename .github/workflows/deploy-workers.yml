@@ -1,0 +1,68 @@
+name: Deploy Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
+      - 'packages/shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'workers/**'
+      - 'packages/shared/**'
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [fanout, delivery, watchdog, ws]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: npx turbo lint --filter=@docpost/${{ matrix.worker }}
+      - run: npx turbo test --filter=@docpost/${{ matrix.worker }}
+      - run: npx turbo typecheck --filter=@docpost/${{ matrix.worker }}
+
+  build-deploy:
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: production
+    strategy:
+      matrix:
+        worker: [fanout, delivery, watchdog, ws]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - name: Build worker
+        run: npx turbo build --filter=@docpost/${{ matrix.worker }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy to Lambda
+        run: |
+          cd workers/${{ matrix.worker }}
+          zip -j function.zip dist/handler.js
+          aws lambda update-function-code \
+            --function-name docpost-${{ matrix.worker }} \
+            --zip-file fileb://function.zip \
+            --publish
+          echo "Deployed ${{ matrix.worker }} worker"

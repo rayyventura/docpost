@@ -1,0 +1,99 @@
+name: Deploy Auth Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/auth/**'
+      - 'packages/shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/auth/**'
+      - 'packages/shared/**'
+
+env:
+  AWS_REGION: us-east-1
+  SERVICE_NAME: auth
+  SERVICE_PORT: 3001
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: npx turbo lint --filter=@docpost/${{ env.SERVICE_NAME }}
+      - run: npx turbo test --filter=@docpost/${{ env.SERVICE_NAME }}
+      - run: npx turbo typecheck --filter=@docpost/${{ env.SERVICE_NAME }}
+
+  build-push:
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f services/${{ env.SERVICE_NAME }}/Dockerfile -t $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG -t $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:latest .
+          docker push $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG
+          docker push $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:latest
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy to ECS (ADR-019)
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Get current task definition
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition docpost-${{ env.SERVICE_NAME }} --query 'taskDefinition' --output json)
+
+          # Update image in container definition
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.ecr-login.outputs.registry || 'ECR_REGISTRY' }}/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          # Register new task definition revision
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Update service to use new revision
+          aws ecs update-service \
+            --cluster docpost \
+            --service docpost-${{ env.SERVICE_NAME }} \
+            --task-definition $NEW_REVISION \
+            --query 'service.taskDefinition' --output text
+
+          # Wait for deployment to stabilize
+          aws ecs wait services-stable \
+            --cluster docpost \
+            --services docpost-${{ env.SERVICE_NAME }}
+
+          echo "Deployed $NEW_REVISION successfully"
