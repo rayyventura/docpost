@@ -158,7 +158,7 @@ NEW_REVISION="$(aws ecs register-task-definition --region "$REGION" --cli-input-
   --query 'taskDefinition.taskDefinitionArn' --output text)"
 
 run_task "$NEW_REVISION" "$(jq -n --arg name "$SERVICE_NAME" --arg dir "$SERVICE_DIR" --arg ws "$WORKSPACE" \
-  '{containerOverrides:[{name:$name, command:["bash","-c", ("if [ -d " + $dir + "/migrations ]; then npm run db:migrate --workspace=" + $ws + "; else echo no migrations; fi")]}]}')"
+  '{containerOverrides:[{name:$name, command:["bash","-c", ("if [ -f " + $dir + "/migrations/meta/_journal.json ]; then npm run db:migrate --workspace=" + $ws + "; else echo no migrations; fi")]}]}')"
 
 aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service "$SERVICE" \
   --task-definition "$NEW_REVISION" --desired-count 1 \
