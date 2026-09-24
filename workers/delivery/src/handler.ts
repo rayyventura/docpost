@@ -2,7 +2,7 @@ import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { S3Client, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
-import { files, tasks, jobs } from './schema.js';
+import { files, tasks } from './schema.js';
 import { pushTaskUpdate } from './notify.js';
 
 let _s3: S3Client | undefined;
@@ -137,7 +137,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
   const formData = new FormData();
   formData.append('metadata', metadata);
-  const blob = new Blob([fileBuffer], { type: file.contentType });
+  const blob = new Blob([Buffer.from(fileBuffer)], { type: file.contentType });
   formData.append('file', blob, file.originalName);
 
   // Deliver to platform

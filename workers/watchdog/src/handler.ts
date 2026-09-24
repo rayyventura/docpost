@@ -60,7 +60,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
   for (const file of pendingFiles) {
     // HEAD S3 to check if file exists
-    let exists = false;
+    let exists: boolean;
     try {
       await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
       exists = true;

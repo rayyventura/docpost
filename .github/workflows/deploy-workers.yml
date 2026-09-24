@@ -53,11 +53,13 @@ jobs:
       - name: Build worker
         run: npx turbo build --filter=@docpost/${{ matrix.worker }}
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy to Lambda
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: |
           cd workers/${{ matrix.worker }}
           zip -j function.zip dist/handler.js

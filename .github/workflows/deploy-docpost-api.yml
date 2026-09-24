@@ -41,14 +41,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build and push Docker image
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -66,11 +69,13 @@ jobs:
     environment: production
     steps:
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy to ECS (ADR-019)
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
