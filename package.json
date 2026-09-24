@@ -14,7 +14,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "verify": "node scripts/verify-milestone6.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",
