@@ -1,0 +1,20 @@
+{
+  "name": "@docpost/ws",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/handler.ts --bundle --platform=node --target=node22 --outfile=dist/handler.js --external:@aws-sdk/*",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@docpost/shared": "*"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "latest",
+    "esbuild": "latest",
+    "vitest": "latest"
+  }
+}
