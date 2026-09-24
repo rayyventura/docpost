@@ -15,12 +15,12 @@ output "db_instance_arn" {
 
 output "rds_proxy_endpoint" {
   description = "Connection endpoint for the RDS Proxy."
-  value       = aws_db_proxy.main.endpoint
+  value       = one(aws_db_proxy.main[*].endpoint)
 }
 
 output "rds_proxy_arn" {
   description = "ARN of the RDS Proxy."
-  value       = aws_db_proxy.main.arn
+  value       = one(aws_db_proxy.main[*].arn)
 }
 
 output "security_group_id" {
@@ -30,7 +30,7 @@ output "security_group_id" {
 
 output "proxy_security_group_id" {
   description = "Security group ID of the RDS Proxy."
-  value       = aws_security_group.rds_proxy.id
+  value       = one(aws_security_group.rds_proxy[*].id)
 }
 
 output "secret_arns" {

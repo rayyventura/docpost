@@ -77,6 +77,12 @@ variable "skip_final_snapshot" {
   default     = true
 }
 
+variable "enable_proxy" {
+  description = "Create an RDS Proxy. Free-plan AWS accounts cannot create one."
+  type        = bool
+  default     = true
+}
+
 variable "client_security_group_ids" {
   description = "Security group IDs for ECS services and Lambda functions that connect via RDS Proxy."
   type        = list(string)

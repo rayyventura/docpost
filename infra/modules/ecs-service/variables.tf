@@ -30,9 +30,15 @@ variable "private_subnet_ids" {
 }
 
 variable "cluster_arn" {
-  description = "ARN of an existing ECS cluster. If null, a new cluster is created."
+  description = "ARN of an existing ECS cluster. Required when create_cluster is false."
   type        = string
   default     = null
+}
+
+variable "create_cluster" {
+  description = "Create an ECS cluster in this module. Set false when cluster_arn points at a cluster owned by another service."
+  type        = bool
+  default     = true
 }
 
 variable "container_image" {

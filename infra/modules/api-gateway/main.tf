@@ -96,6 +96,6 @@ resource "aws_apigatewayv2_route" "routes" {
   route_key = each.value.route_key
   target    = "integrations/${aws_apigatewayv2_integration.alb.id}"
 
-  authorization_type = each.value.require_auth ? "JWT" : "NONE"
+  authorization_type = each.value.require_auth && length(aws_apigatewayv2_authorizer.jwt) > 0 ? "JWT" : "NONE"
   authorizer_id      = each.value.require_auth && length(aws_apigatewayv2_authorizer.jwt) > 0 ? aws_apigatewayv2_authorizer.jwt[0].id : null
 }

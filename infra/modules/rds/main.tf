@@ -141,6 +141,8 @@ resource "aws_secretsmanager_secret_version" "service_credentials" {
 # Security Group — RDS Proxy
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "rds_proxy" {
+  count = var.enable_proxy ? 1 : 0
+
   name_prefix = "${var.project_name}-${var.environment}-rds-proxy-"
   description = "Security group for RDS Proxy"
   vpc_id      = var.vpc_id
@@ -177,6 +179,8 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 resource "aws_iam_role" "rds_proxy" {
+  count = var.enable_proxy ? 1 : 0
+
   name = "${var.project_name}-${var.environment}-rds-proxy-role"
 
   assume_role_policy = jsonencode({
@@ -196,8 +200,10 @@ resource "aws_iam_role" "rds_proxy" {
 }
 
 resource "aws_iam_role_policy" "rds_proxy_secrets" {
+  count = var.enable_proxy ? 1 : 0
+
   name = "${var.project_name}-${var.environment}-rds-proxy-secrets"
-  role = aws_iam_role.rds_proxy.id
+  role = aws_iam_role.rds_proxy[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -223,13 +229,15 @@ resource "aws_iam_role_policy" "rds_proxy_secrets" {
 # RDS Proxy
 # -----------------------------------------------------------------------------
 resource "aws_db_proxy" "main" {
+  count = var.enable_proxy ? 1 : 0
+
   name                   = "${var.project_name}-${var.environment}-proxy"
   debug_logging          = false
   engine_family          = "POSTGRESQL"
   idle_client_timeout    = 1800
   require_tls            = true
-  role_arn               = aws_iam_role.rds_proxy.arn
-  vpc_security_group_ids = [aws_security_group.rds_proxy.id]
+  role_arn               = aws_iam_role.rds_proxy[0].arn
+  vpc_security_group_ids = [aws_security_group.rds_proxy[0].id]
   vpc_subnet_ids         = var.private_subnet_ids
 
   auth {
@@ -255,7 +263,9 @@ resource "aws_db_proxy" "main" {
 }
 
 resource "aws_db_proxy_default_target_group" "main" {
-  db_proxy_name = aws_db_proxy.main.name
+  count = var.enable_proxy ? 1 : 0
+
+  db_proxy_name = aws_db_proxy.main[0].name
 
   connection_pool_config {
     max_connections_percent      = 100
@@ -265,7 +275,9 @@ resource "aws_db_proxy_default_target_group" "main" {
 }
 
 resource "aws_db_proxy_target" "main" {
-  db_proxy_name          = aws_db_proxy.main.name
-  target_group_name      = aws_db_proxy_default_target_group.main.name
+  count = var.enable_proxy ? 1 : 0
+
+  db_proxy_name          = aws_db_proxy.main[0].name
+  target_group_name      = aws_db_proxy_default_target_group.main[0].name
   db_instance_identifier = aws_db_instance.main.identifier
 }
