@@ -46,11 +46,13 @@ jobs:
       - name: Build SPA
         run: npx turbo build --filter=@docpost/web
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy to S3 + invalidate CloudFront
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: |
           aws s3 sync web/dist/ s3://${{ secrets.SPA_BUCKET_NAME }}/ --delete
           aws cloudfront create-invalidation \

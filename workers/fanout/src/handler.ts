@@ -1,7 +1,7 @@
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks } from './schema.js';
 

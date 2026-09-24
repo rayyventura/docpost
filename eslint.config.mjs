@@ -9,4 +9,12 @@ export default tseslint.config(
   {
     ignores: ["**/dist/**", "**/node_modules/**", "**/.turbo/**"],
   },
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
 );

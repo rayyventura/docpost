@@ -18,11 +18,13 @@
     "verify": "node scripts/verify-milestone6.mjs"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "latest",
     "eslint": "latest",
     "eslint-config-prettier": "latest",
     "prettier": "latest",
     "turbo": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "typescript-eslint": "^8.70.1"
   }
 }

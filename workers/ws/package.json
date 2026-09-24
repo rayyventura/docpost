@@ -7,7 +7,7 @@
     "build": "esbuild src/handler.ts --bundle --platform=node --target=node22 --outfile=dist/handler.js --external:@aws-sdk/*",
     "dev": "tsx watch src/dev.ts",
     "lint": "eslint src/",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

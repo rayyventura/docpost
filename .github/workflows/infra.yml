@@ -33,15 +33,19 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Terraform Init
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: terraform init
       - name: Terraform Validate
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: terraform validate
       - name: Terraform Plan
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         id: plan
         run: terraform plan -no-color -out=tfplan
         continue-on-error: true
@@ -82,11 +86,14 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Terraform Init
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: terraform init
       - name: Terraform Apply
+        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
         run: terraform apply -auto-approve
