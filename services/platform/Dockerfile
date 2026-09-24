@@ -2,7 +2,7 @@ FROM node:22-slim AS base
 WORKDIR /app
 
 # Copy workspace config
-COPY package.json package-lock.json* turbo.json ./
+COPY package.json package-lock.json* turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY services/platform/package.json ./services/platform/
 
