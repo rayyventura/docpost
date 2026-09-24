@@ -49,6 +49,8 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - name: Build SPA
+        env:
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
         run: npx turbo build --filter=@docpost/web
       - name: Configure AWS credentials
         if: env.DEPLOY_ENABLED == 'true'

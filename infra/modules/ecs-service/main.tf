@@ -63,7 +63,7 @@ resource "aws_cloudwatch_log_group" "service" {
 # ECS Cluster (conditionally created)
 # -----------------------------------------------------------------------------
 resource "aws_ecs_cluster" "this" {
-  count = var.cluster_arn == null ? 1 : 0
+  count = var.create_cluster ? 1 : 0
 
   name = "${var.project_name}-${var.environment}-cluster"
 
@@ -78,7 +78,7 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
-  cluster_arn = var.cluster_arn != null ? var.cluster_arn : aws_ecs_cluster.this[0].arn
+  cluster_arn = var.create_cluster ? aws_ecs_cluster.this[0].arn : var.cluster_arn
 }
 
 # -----------------------------------------------------------------------------

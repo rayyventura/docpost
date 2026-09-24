@@ -18,6 +18,8 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  ENVIRONMENT: dev
+  ECS_CLUSTER: docpost-dev-cluster
   SERVICE_NAME: docpost-api
   SERVICE_PORT: 3003
   DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
@@ -43,6 +45,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      image: ${{ steps.push.outputs.image }}
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
@@ -57,13 +61,16 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build and push Docker image
         if: env.DEPLOY_ENABLED == 'true'
+        id: push
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -f services/${{ env.SERVICE_NAME }}/Dockerfile -t $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG -t $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:latest .
-          docker push $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG
-          docker push $ECR_REGISTRY/docpost-${{ env.SERVICE_NAME }}:latest
+          IMAGE="$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:$IMAGE_TAG"
+          docker build -f services/${{ env.SERVICE_NAME }}/Dockerfile -t "$IMAGE" -t "$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:latest" .
+          docker push "$IMAGE"
+          docker push "$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:latest"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: build-push
@@ -73,37 +80,13 @@ jobs:
       contents: read
     environment: production
     steps:
+      - uses: actions/checkout@v4
       - name: Configure AWS credentials
         if: env.DEPLOY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy to ECS (ADR-019)
+      - name: Deploy to ECS
         if: env.DEPLOY_ENABLED == 'true'
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition --task-definition docpost-${{ env.SERVICE_NAME }} --query 'taskDefinition' --output json)
-
-          # Update image in container definition
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.ecr-login.outputs.registry || 'ECR_REGISTRY' }}/docpost-${{ env.SERVICE_NAME }}:$IMAGE_TAG" \
-            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
-
-          # Register new task definition revision
-          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-
-          # Update service to use new revision
-          aws ecs update-service \
-            --cluster docpost \
-            --service docpost-${{ env.SERVICE_NAME }} \
-            --task-definition $NEW_REVISION \
-            --query 'service.taskDefinition' --output text
-
-          # Wait for deployment to stabilize
-          aws ecs wait services-stable \
-            --cluster docpost \
-            --services docpost-${{ env.SERVICE_NAME }}
-
-          echo "Deployed $NEW_REVISION successfully"
+        run: bash scripts/ci-deploy-service.sh ${{ env.SERVICE_NAME }} ${{ needs.build-push.outputs.image }}

@@ -1,4 +1,10 @@
-const API_BASE = '';  // Uses Vite proxy
+const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+
+let onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(callback: () => void): void {
+  onUnauthorized = callback;
+}
 
 function getToken(): string | null {
   return sessionStorage.getItem('accessToken');
@@ -33,7 +39,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
 
   if (response.status === 401 && !path.startsWith('/auth/')) {
     clearToken();
-    window.location.href = '/login';
+    onUnauthorized?.();
     throw new Error('Unauthorized');
   }
 

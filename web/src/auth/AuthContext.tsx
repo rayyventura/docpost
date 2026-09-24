@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { apiRequest, setToken, clearToken } from '../api/client';
+import { apiRequest, setToken, clearToken, setOnUnauthorized } from '../api/client';
 
 interface User {
   id: string;
@@ -96,6 +96,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearToken();
     setUser(null);
   }, []);
+
+  useEffect(() => {
+    setOnUnauthorized(logout);
+    return () => setOnUnauthorized(() => {});
+  }, [logout]);
 
   const value: AuthState = {
     user,

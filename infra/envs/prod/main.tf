@@ -9,10 +9,10 @@ terraform {
   #   cd bootstrap && terraform output
   # Then fill in bucket, dynamodb_table below.
   backend "s3" {
-    bucket         = "REPLACE_WITH_BOOTSTRAP_OUTPUT" # state_bucket_name
+    bucket         = "docpost-terraform-state-85db398b" # state_bucket_name
     key            = "prod/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "REPLACE_WITH_BOOTSTRAP_OUTPUT" # lock_table_name
+    dynamodb_table = "docpost-terraform-lock" # lock_table_name
     encrypt        = true
   }
 
@@ -205,6 +205,7 @@ module "ecs_platform" {
   cpu             = var.ecs_cpu
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
+  create_cluster  = false
   cluster_arn     = module.ecs_auth.cluster_arn
 
   alb_security_group_ids = [module.alb.security_group_id]
@@ -235,6 +236,7 @@ module "ecs_docpost_api" {
   cpu             = var.ecs_cpu
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
+  create_cluster  = false
   cluster_arn     = module.ecs_auth.cluster_arn
 
   alb_security_group_ids = [module.alb.security_group_id]

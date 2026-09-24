@@ -35,3 +35,6 @@ services/platform/uploads/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Local RDS master password for Terraform
+infra/envs/dev/.rds-password

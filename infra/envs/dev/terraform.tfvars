@@ -9,7 +9,7 @@ region       = "us-east-1"
 # Network
 vpc_cidr = "10.0.0.0/16"
 
-# RDS — small instance for dev
+# RDS — small instance for dev. Proxy is off because AWS free-plan accounts cannot create one.
 rds_instance_class = "db.t4g.micro"
 # rds_master_password — set via TF_VAR_rds_master_password or -var flag
 
