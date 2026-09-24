@@ -5,14 +5,17 @@ on:
     branches: [main]
     paths:
       - 'infra/**'
+      - '.github/workflows/infra.yml'
   pull_request:
     branches: [main]
     paths:
       - 'infra/**'
+      - '.github/workflows/infra.yml'
 
 env:
   AWS_REGION: us-east-1
   TF_VERSION: '1.9'
+  DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
 
 jobs:
   plan:
@@ -33,19 +36,19 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Terraform Init
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         run: terraform init
       - name: Terraform Validate
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         run: terraform validate
       - name: Terraform Plan
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         id: plan
         run: terraform plan -no-color -out=tfplan
         continue-on-error: true
@@ -86,14 +89,14 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Terraform Init
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         run: terraform init
       - name: Terraform Apply
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         run: terraform apply -auto-approve

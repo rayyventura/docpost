@@ -30,5 +30,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Local uploaded files
+services/platform/uploads/
+
 # Claude Code local settings
 .claude/settings.local.json

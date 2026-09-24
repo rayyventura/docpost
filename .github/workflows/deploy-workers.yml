@@ -6,14 +6,17 @@ on:
     paths:
       - 'workers/**'
       - 'packages/shared/**'
+      - '.github/workflows/deploy-workers.yml'
   pull_request:
     branches: [main]
     paths:
       - 'workers/**'
       - 'packages/shared/**'
+      - '.github/workflows/deploy-workers.yml'
 
 env:
   AWS_REGION: us-east-1
+  DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
 
 jobs:
   lint-test:
@@ -53,13 +56,13 @@ jobs:
       - name: Build worker
         run: npx turbo build --filter=@docpost/${{ matrix.worker }}
       - name: Configure AWS credentials
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy to Lambda
-        if: secrets.AWS_DEPLOY_ROLE_ARN != ''
+        if: env.DEPLOY_ENABLED == 'true'
         run: |
           cd workers/${{ matrix.worker }}
           zip -j function.zip dist/handler.js
