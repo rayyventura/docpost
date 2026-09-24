@@ -1,10 +1,9 @@
 import { useState, useCallback } from 'react';
 import { apiRequest } from '../api/client';
 import { FilePicker } from './FilePicker';
-import { DestinationPicker } from './DestinationPicker';
-import { MappingMatrix } from './MappingMatrix';
+import { DestinationTree } from './DestinationTree';
 import { uploadFiles } from './uploadQueue';
-import type { SelectedFile, Destination, Mapping, JobSubmitResponse } from './types';
+import type { SelectedFile, Destination, JobSubmitResponse } from './types';
 
 interface NewJobPageProps {
   onJobCreated: (jobId: string) => void;
@@ -13,7 +12,6 @@ interface NewJobPageProps {
 export function NewJobPage({ onJobCreated }: NewJobPageProps) {
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,54 +19,23 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
     if (newFiles.length > 0) {
       setFiles((prev) => [...prev, ...newFiles]);
     } else {
-      // Trigger re-render for hash completion
       setFiles((prev) => [...prev]);
     }
   }, []);
 
   const handleFileRemoved = useCallback((id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
-    setMappings((prev) => prev.filter((m) => m.fileId !== id));
   }, []);
-
-  const handleAddDestination = useCallback((dest: Destination) => {
-    setDestinations((prev) => [...prev, dest]);
-  }, []);
-
-  const handleRemoveDestination = useCallback(
-    (index: number) => {
-      const removed = destinations[index];
-      setDestinations((prev) => prev.filter((_, i) => i !== index));
-      // Remove from mappings
-      setMappings((prev) =>
-        prev
-          .map((m) => ({
-            ...m,
-            destinations: m.destinations.filter(
-              (d) =>
-                !(
-                  d.teamId === removed.teamId &&
-                  d.binderId === removed.binderId &&
-                  (d.folderId ?? null) === (removed.folderId ?? null)
-                ),
-            ),
-          }))
-          .filter((m) => m.destinations.length > 0),
-      );
-    },
-    [destinations],
-  );
 
   const readyFiles = files.filter((f) => f.status === 'ready');
-  const taskCount = mappings.reduce((sum, m) => sum + m.destinations.length, 0);
-  const canSubmit = readyFiles.length > 0 && taskCount > 0 && !submitting;
+  const taskCount = readyFiles.length * destinations.length;
+  const canSubmit = readyFiles.length > 0 && destinations.length > 0 && !submitting;
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
     setError(null);
 
     try {
-      // Build request body using fileIndex (not fileId)
       const filePayload = readyFiles.map((f) => ({
         name: f.file.name,
         sizeBytes: f.file.size,
@@ -76,24 +43,20 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
         sha256: f.sha256,
       }));
 
-      const mappingPayload = mappings
-        .filter((m) => readyFiles.some((f) => f.id === m.fileId))
-        .map((m) => ({
-          fileIndex: readyFiles.findIndex((f) => f.id === m.fileId),
-          destinations: m.destinations.map((d) => ({
-            teamId: d.teamId,
-            binderId: d.binderId,
-            folderId: d.folderId ?? null,
-          })),
-        }))
-        .filter((m) => m.fileIndex >= 0);
+      const mappingPayload = readyFiles.map((_, i) => ({
+        fileIndex: i,
+        destinations: destinations.map((d) => ({
+          teamId: d.teamId,
+          binderId: d.binderId,
+          folderId: d.folderId ?? null,
+        })),
+      }));
 
       const response = await apiRequest<JobSubmitResponse>('/jobs', {
         method: 'POST',
         body: JSON.stringify({ files: filePayload, mappings: mappingPayload }),
       });
 
-      // Map server file IDs back to client files (uploads array is same order as files)
       const updatedFiles = [...files];
       readyFiles.forEach((sf, i) => {
         const idx = updatedFiles.findIndex((f) => f.id === sf.id);
@@ -107,10 +70,8 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       });
       setFiles(updatedFiles);
 
-      // Start uploads in background, then navigate to dashboard
       onJobCreated(response.jobId);
 
-      // Upload files using presigned URLs
       uploadFiles(
         updatedFiles.filter((f) => f.serverFileId),
         response.uploads,
@@ -129,46 +90,62 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       setError(err instanceof Error ? err.message : 'Submission failed');
       setSubmitting(false);
     }
-  }, [readyFiles, mappings, files, onJobCreated]);
+  }, [readyFiles, destinations, files, onJobCreated]);
 
   return (
     <div className="new-job-page">
       <h2>New Distribution</h2>
 
-      <section className="job-section">
-        <h3>1. Select Files</h3>
-        <FilePicker
-          files={files}
-          onFilesAdded={handleFilesAdded}
-          onFileRemoved={handleFileRemoved}
-          disabled={submitting}
-        />
-      </section>
+      <div className="distribute-panels">
+        <div className="panel-left">
+          <DestinationTree selected={destinations} onChange={setDestinations} />
+        </div>
+        <div className="panel-right">
+          <div className="panel-right-header">Files</div>
+          <FilePicker
+            files={files}
+            onFilesAdded={handleFilesAdded}
+            onFileRemoved={handleFileRemoved}
+            disabled={submitting}
+          />
+        </div>
+      </div>
 
-      <section className="job-section">
-        <h3>2. Choose Destinations</h3>
-        <DestinationPicker
-          selected={destinations}
-          onAdd={handleAddDestination}
-          onRemove={handleRemoveDestination}
-        />
-      </section>
-
-      <section className="job-section">
-        <h3>3. Map Files to Destinations</h3>
-        <MappingMatrix
-          files={files}
-          destinations={destinations}
-          mappings={mappings}
-          onMappingsChange={setMappings}
-        />
-      </section>
+      {destinations.length > 0 && (
+        <div className="selection-summary">
+          <div className="summary-destinations">
+            {destinations.map((d, i) => (
+              <span key={i} className="dest-chip">
+                {d.teamName} / {d.binderName}
+                {d.folderName && ` / ${d.folderName}`}
+                <button
+                  className="chip-remove"
+                  onClick={() =>
+                    setDestinations(destinations.filter((_, j) => j !== i))
+                  }
+                >
+                  &times;
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
       <div className="job-actions">
+        <div className="action-summary">
+          {readyFiles.length > 0 && destinations.length > 0 && (
+            <span className="task-count-label">
+              {readyFiles.length} file{readyFiles.length !== 1 ? 's' : ''} &times;{' '}
+              {destinations.length} destination{destinations.length !== 1 ? 's' : ''} ={' '}
+              <strong>{taskCount} tasks</strong>
+            </span>
+          )}
+        </div>
         <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-          {submitting ? 'Submitting...' : `Send (${taskCount} tasks)`}
+          {submitting ? 'Submitting...' : `Send${taskCount > 0 ? ` (${taskCount} tasks)` : ''}`}
         </button>
       </div>
     </div>
