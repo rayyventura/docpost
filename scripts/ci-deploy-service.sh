@@ -17,18 +17,21 @@ case "$SERVICE_NAME" in
     DB_USER=auth_service
     SECRET_ID="docpost/${ENVIRONMENT}/rds/auth_service"
     WORKSPACE=@docpost/auth
+    SERVICE_DIR=services/auth
     ;;
   platform)
     DB_NAME=docpost_platform
     DB_USER=platform_service
     SECRET_ID="docpost/${ENVIRONMENT}/rds/platform_service"
     WORKSPACE=@docpost/platform
+    SERVICE_DIR=services/platform
     ;;
   docpost-api)
     DB_NAME=docpost_api
     DB_USER=docpost_service
     SECRET_ID="docpost/${ENVIRONMENT}/rds/docpost_service"
     WORKSPACE=@docpost/docpost-api
+    SERVICE_DIR=services/docpost-api
     ;;
   *)
     echo "Unknown service: $SERVICE_NAME" >&2
@@ -154,8 +157,8 @@ NEW_TASK_DEF="$(echo "$TASK_DEF" | jq --arg IMAGE "$IMAGE" \
 NEW_REVISION="$(aws ecs register-task-definition --region "$REGION" --cli-input-json "$NEW_TASK_DEF" \
   --query 'taskDefinition.taskDefinitionArn' --output text)"
 
-run_task "$NEW_REVISION" "$(jq -n --arg name "$SERVICE_NAME" --arg ws "$WORKSPACE" \
-  '{containerOverrides:[{name:$name, command:["npm","run","db:migrate","--workspace",$ws]}]}')"
+run_task "$NEW_REVISION" "$(jq -n --arg name "$SERVICE_NAME" --arg dir "$SERVICE_DIR" --arg ws "$WORKSPACE" \
+  '{containerOverrides:[{name:$name, command:["bash","-c", ("if [ -d " + $dir + "/migrations ]; then npm run db:migrate --workspace=" + $ws + "; else echo no migrations; fi")]}]}')"
 
 aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service "$SERVICE" \
   --task-definition "$NEW_REVISION" --desired-count 1 \
