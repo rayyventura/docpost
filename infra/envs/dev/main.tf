@@ -180,6 +180,7 @@ module "ecs_auth" {
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
 
+  target_group_arn       = module.alb.target_group_arns["auth"]
   alb_security_group_ids = [module.alb.security_group_id]
   secret_arns            = [module.rds.secret_arns["auth_service"]]
 
@@ -211,6 +212,7 @@ module "ecs_platform" {
   create_cluster  = false
   cluster_arn     = module.ecs_auth.cluster_arn
 
+  target_group_arn       = module.alb.target_group_arns["platform"]
   alb_security_group_ids = [module.alb.security_group_id]
   secret_arns            = [module.rds.secret_arns["platform_service"]]
 
@@ -242,6 +244,7 @@ module "ecs_docpost_api" {
   create_cluster  = false
   cluster_arn     = module.ecs_auth.cluster_arn
 
+  target_group_arn       = module.alb.target_group_arns["docpost-api"]
   alb_security_group_ids = [module.alb.security_group_id]
   secret_arns            = [module.rds.secret_arns["docpost_service"]]
 
