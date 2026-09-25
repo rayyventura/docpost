@@ -293,7 +293,7 @@ module "lambda_fanout" {
   project_name = var.project_name
   environment  = var.environment
   function_name = "fanout"
-  handler       = "index.handler"
+  handler       = "handler.handler"
   memory_size   = 256
   timeout       = 60
 
@@ -324,7 +324,7 @@ module "lambda_delivery" {
   project_name = var.project_name
   environment  = var.environment
   function_name = "delivery"
-  handler       = "index.handler"
+  handler       = "handler.handler"
   memory_size   = 256
   timeout       = 60
 
@@ -356,7 +356,7 @@ module "lambda_watchdog" {
   project_name = var.project_name
   environment  = var.environment
   function_name = "watchdog"
-  handler       = "index.handler"
+  handler       = "handler.handler"
   memory_size   = 128
   timeout       = 60
 
@@ -388,7 +388,7 @@ module "lambda_ws_lifecycle" {
   project_name = var.project_name
   environment  = var.environment
   function_name = "ws-lifecycle"
-  handler       = "index.handler"
+  handler       = "handler.handler"
   memory_size   = 128
   timeout       = 30
 
