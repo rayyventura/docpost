@@ -37,6 +37,15 @@ async function getServiceToken(): Promise<string> {
   return accessToken;
 }
 
+export async function teamBinderIds(teamId: string, userToken: string): Promise<string[]> {
+  const res = await fetch(`${PLATFORM_URL}/teams/${teamId}/binders`, {
+    headers: { Authorization: `Bearer ${userToken}` },
+  });
+  if (!res.ok) return [];
+  const rows = (await res.json()) as { id: string }[];
+  return rows.map((row) => row.id);
+}
+
 export async function visibleTeams(userToken: string): Promise<Map<string, string>> {
   const teamsRes = await fetch(`${PLATFORM_URL}/teams?docPostEnabled=true`, {
     headers: { Authorization: `Bearer ${userToken}` },
@@ -47,6 +56,40 @@ export async function visibleTeams(userToken: string): Promise<Map<string, strin
 
   const teams = (await teamsRes.json()) as { id: string; name: string }[];
   return new Map(teams.map((team) => [team.id, team.name]));
+}
+
+export async function destinationPaths(
+  items: Array<{ teamId: string; binderId: string; folderId: string | null }>,
+): Promise<Map<string, string>> {
+  const paths = new Map<string, string>();
+  if (items.length === 0) return paths;
+
+  const keyFor = (item: { teamId: string; binderId: string; folderId: string | null }) =>
+    `${item.teamId}:${item.binderId}:${item.folderId ?? ''}`;
+
+  try {
+    const serviceToken = await getServiceToken();
+    const res = await fetch(`${PLATFORM_URL}/internal/destination-paths`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ destinations: items }),
+    });
+    if (!res.ok) return paths;
+
+    const body = (await res.json()) as {
+      destinations: Array<{ teamId: string; binderId: string; folderId: string | null; path: string }>;
+    };
+    for (const destination of body.destinations ?? []) {
+      paths.set(keyFor(destination), destination.path);
+    }
+  } catch {
+    return paths;
+  }
+
+  return paths;
 }
 
 export async function teamName(teamId: string): Promise<string> {

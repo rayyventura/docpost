@@ -29,7 +29,18 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
   }, []);
 
   const readyFiles = files.filter((f) => f.status === 'ready');
-  const canSubmit = readyFiles.length > 0 && destinations.length > 0 && !submitting;
+  const missingFiles = readyFiles.length === 0;
+  const missingDestinations = destinations.length === 0;
+  const canSubmit = !missingFiles && !missingDestinations && !submitting;
+  const disabledReason = submitting
+    ? undefined
+    : missingFiles && missingDestinations
+      ? 'Add at least one file and choose at least one destination'
+      : missingFiles
+        ? 'Add at least one file'
+        : missingDestinations
+          ? 'Choose at least one destination'
+          : undefined;
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
@@ -47,7 +58,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
         fileIndex: i,
         destinations: destinations.map((d) => ({
           teamId: d.teamId,
-          binderId: d.binderId,
+          binderId: d.binderId ?? null,
           folderId: d.folderId ?? null,
         })),
       }));
@@ -105,7 +116,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
           <div className="summary-destinations">
             {destinations.map((d, i) => (
               <span key={i} className="dest-chip">
-                {d.teamName} / {d.binderName}
+                {d.binderName ? `${d.teamName} / ${d.binderName}` : d.teamName}
                 {d.folderName && ` / ${d.folderName}`}
                 <button
                   className="chip-remove"
@@ -124,9 +135,12 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="job-actions">
-        <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-          {submitting ? 'Sending...' : 'Send'}
-        </button>
+        <span className="send-button-wrap" title={disabledReason}>
+          <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
+            {submitting ? 'Sending...' : 'Send'}
+          </button>
+          {disabledReason && <span className="send-tooltip" role="tooltip">{disabledReason}</span>}
+        </span>
       </div>
     </div>
   );

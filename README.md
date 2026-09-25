@@ -215,10 +215,45 @@ Docker Compose starts LocalStack with S3, SQS, and KMS. The init script (`script
 
 Infrastructure is managed with Terraform under `infra/`. Two environments are configured:
 
-- `infra/envs/dev/`: Development
-- `infra/envs/prod/`: Production
+- `infra/envs/dev/`: Development. This is the environment to create and destroy when you want AWS charges to stop.
+- `infra/envs/prod/`: Production.
 
 Terraform modules cover: VPC networking, ALB, API Gateway, CloudFront CDN, ECR repositories, ECS Fargate services, RDS PostgreSQL, S3 buckets, SQS queues, and Lambda functions.
+
+The pieces that keep billing while the app is idle are the NAT gateway, the RDS instance, and the load balancer. `terraform destroy` in the dev environment removes them. Leave the state backend in `bootstrap/` in place. That bucket and lock table are what the next `terraform apply` uses to recreate the environment, and they are not the running app.
+
+### Spin the dev environment up
+
+Requires the AWS CLI, Terraform 1.5 or newer, and credentials that can create resources in the account. The remote state backend already exists. `infra/envs/dev/main.tf` points at it.
+
+```bash
+cd infra/envs/dev
+export RDS_MASTER_PASSWORD='choose-a-password'
+terraform init
+terraform plan -var="rds_master_password=$RDS_MASTER_PASSWORD"
+terraform apply -var="rds_master_password=$RDS_MASTER_PASSWORD"
+```
+
+`plan` prints every resource that will be created. `apply` asks for confirmation, then creates the dev network, database, load balancer, and the rest of the stack. The password is only passed on the command line. Do not commit it.
+
+### Tear the dev environment down
+
+From the same directory, with the same password variable set:
+
+```bash
+cd infra/envs/dev
+terraform destroy -var="rds_master_password=$RDS_MASTER_PASSWORD"
+```
+
+Confirm with `yes` when prompted. This deletes the dev VPC, NAT gateway, RDS instance, load balancer, ECS services, queues, and buckets. Dev is configured to skip a final database snapshot, so the database goes away with the stack.
+
+If destroy stops because an S3 bucket still has objects, empty that bucket and run `terraform destroy` again:
+
+```bash
+aws s3 rm s3://BUCKET_NAME --recursive
+```
+
+Do not run `terraform destroy` inside `bootstrap/`. That state bucket is protected, and removing it does not stop the NAT gateway or the database. Destroy prod only when you intend to delete production. Prod keeps a final RDS snapshot, and that snapshot can still incur a small storage charge.
 
 ### CI/CD
 

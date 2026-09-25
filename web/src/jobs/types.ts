@@ -1,8 +1,8 @@
 export interface Destination {
   teamId: string;
   teamName: string;
-  binderId: string;
-  binderName: string;
+  binderId?: string;
+  binderName?: string;
   folderId?: string;
   folderName?: string;
 }
@@ -58,6 +58,7 @@ export interface TaskDetail {
   teamId: string;
   binderId: string;
   folderId: string | null;
+  destination: string | null;
   status: string;
   attemptCount: number;
   failureReason: string | null;

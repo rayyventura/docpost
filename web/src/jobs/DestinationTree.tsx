@@ -29,8 +29,8 @@ interface DestinationTreeProps {
   onChange: (destinations: Destination[]) => void;
 }
 
-function destKey(d: { teamId: string; binderId: string; folderId?: string | null }): string {
-  return `${d.teamId}:${d.binderId}:${d.folderId ?? ''}`;
+function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
+  return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
 }
 
 function Expander({
@@ -45,11 +45,12 @@ function Expander({
   onClick: () => void;
 }) {
   if (!loading && !expandable) {
-    return <span className="tree-arrow tree-arrow-placeholder" aria-hidden="true" />;
+    return <span className="tree-arrow-gap" aria-hidden="true" />;
   }
 
   return (
     <button
+      type="button"
       className="tree-arrow"
       onClick={onClick}
       aria-label={expanded ? 'Collapse' : 'Expand'}
@@ -69,6 +70,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
 
   const [bindersByTeam, setBindersByTeam] = useState<Map<string, Binder[]>>(new Map());
   const [foldersByParent, setFoldersByParent] = useState<Map<string, FolderNode[]>>(new Map());
+  const [emptyNodes, setEmptyNodes] = useState<Set<string>>(new Set());
 
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
 
@@ -167,11 +169,13 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
             return next;
           });
           if (childFolders.length === 0) {
+            setEmptyNodes((prev) => new Set(prev).add(parentKey));
             markLoading(parentKey, false);
             return;
           }
         } catch (err) {
           console.error(err);
+          setEmptyNodes((prev) => new Set(prev).add(parentKey));
           markLoading(parentKey, false);
           return;
         }
@@ -219,11 +223,13 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
             return next;
           });
           if (childFolders.length === 0) {
+            setEmptyNodes((prev) => new Set(prev).add(parentKey));
             markLoading(parentKey, false);
             return;
           }
         } catch (err) {
           console.error(err);
+          setEmptyNodes((prev) => new Set(prev).add(parentKey));
           markLoading(parentKey, false);
           return;
         }
@@ -236,7 +242,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
   );
 
   const isSelected = useCallback(
-    (d: { teamId: string; binderId: string; folderId?: string | null }): boolean =>
+    (d: { teamId: string; binderId?: string | null; folderId?: string | null }): boolean =>
       selected.some((s) => destKey(s) === destKey(d)),
     [selected],
   );
@@ -262,7 +268,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
       const isExpanded = expandedFolders.has(folder.id);
       const isLoading = loadingSet.has(childKey);
       const childFolders = foldersByParent.get(childKey);
-      const hasChildren = childFolders ? childFolders.length > 0 : !foldersByParent.has(childKey);
+      const hasChildren = !emptyNodes.has(childKey) && (childFolders ? childFolders.length > 0 : !foldersByParent.has(childKey));
 
       const dest: Destination = {
         teamId: folder.teamId,
@@ -331,8 +337,13 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
 
           return (
             <div key={team.id} className="tree-team-group">
-              <div className="tree-row tree-row-team" onClick={() => toggleTeam(team)}>
-                <button className="tree-arrow" aria-label={isExpanded ? 'Collapse' : 'Expand'}>
+              <div className="tree-row tree-row-team">
+                <button
+                  type="button"
+                  className="tree-arrow"
+                  onClick={() => toggleTeam(team)}
+                  aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                >
                   {isLoading ? (
                     <span className="tree-spinner" />
                   ) : isExpanded ? (
@@ -341,17 +352,25 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
                     '▸'
                   )}
                 </button>
-                <span className="tree-name tree-name-team">{team.name}</span>
+                <label className="tree-check-label">
+                  <input
+                    type="checkbox"
+                    checked={isSelected({ teamId: team.id })}
+                    onChange={() => toggleDestination({ teamId: team.id, teamName: team.name })}
+                  />
+                  <span className="tree-name tree-name-team">{team.name}</span>
+                </label>
               </div>
 
               {isExpanded &&
                 binders?.map((binder) => {
                   const binderExpanded = expandedBinders.has(binder.id);
                   const binderLoading = loadingSet.has(`binder:${binder.id}`);
-                  const binderFolders = foldersByParent.get(`binder:${binder.id}`);
-                  const hasFolders = binderFolders
+                  const binderKey = `binder:${binder.id}`;
+                  const binderFolders = foldersByParent.get(binderKey);
+                  const hasFolders = !emptyNodes.has(binderKey) && (binderFolders
                     ? binderFolders.length > 0
-                    : !foldersByParent.has(`binder:${binder.id}`);
+                    : !foldersByParent.has(binderKey));
 
                   const binderDest: Destination = {
                     teamId: binder.teamId,
