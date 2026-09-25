@@ -49,7 +49,7 @@ export function RegisterPage() {
     <div className="auth-page">
       <div className="auth-branding">
         <h1 className="auth-brand-title">DocPost</h1>
-        <p className="auth-brand-tagline">Healthcare Distributed Document Delivery Platform</p>
+        <p className="auth-brand-tagline">Healthcare Document Delivery Platform</p>
       </div>
       <div className="auth-card">
         <h2>Create Account</h2>
