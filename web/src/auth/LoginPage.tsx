@@ -28,8 +28,12 @@ export function LoginPage() {
 
   return (
     <div className="auth-page">
+      <div className="auth-branding">
+        <h1 className="auth-brand-title">DocPost</h1>
+        <p className="auth-brand-tagline">Healthcare Distributed Document Delivery Platform</p>
+      </div>
       <div className="auth-card">
-        <h1>Sign In</h1>
+        <h2>Sign In</h2>
         <p className="auth-subtitle">Welcome back to DocPost</p>
 
         {error && <div className="error-banner">{error}</div>}
