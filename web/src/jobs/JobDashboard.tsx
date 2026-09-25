@@ -8,6 +8,11 @@ interface JobDashboardProps {
   jobId?: string;
 }
 
+function uploadedByLine(name: string, createdAt: string): string {
+  const when = formatDate(createdAt, true).replace(', ', ' ');
+  return `Uploaded by ${name.toUpperCase()}, ${when}`;
+}
+
 function aggregateStatus(counts: JobSummary['counts']): string {
   const total = counts.pending + counts.in_progress + counts.completed + counts.failed;
   if (total === 0 || counts.pending === total) return 'pending';
@@ -160,7 +165,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
                     {j.aggregateStatus}
                   </span>
                   <span className="job-item-meta">
-                    {formatDate(j.createdAt, true)}, uploaded by {j.submitterName.toUpperCase()}
+                    {uploadedByLine(j.submitterName, j.createdAt)}
                   </span>
                 </div>
                 <div className="job-item-counts">
@@ -192,7 +197,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
             </span>
             <span>{selectedJob.taskCount} total items</span>
             <span className="job-item-meta">
-              {formatDate(selectedJob.createdAt, true)}, uploaded by {selectedJob.submitterName.toUpperCase()}
+              {uploadedByLine(selectedJob.submitterName, selectedJob.createdAt)}
             </span>
           </div>
           <div className="counts-bar">
