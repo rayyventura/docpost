@@ -14,6 +14,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formKey, setFormKey] = useState(0);
 
   const handleFilesAdded = useCallback((newFiles: SelectedFile[]) => {
     if (newFiles.length > 0) {
@@ -67,24 +68,15 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
           };
         }
       });
-      setFiles(updatedFiles);
+      const filesToUpload = updatedFiles.filter((f) => f.serverFileId);
+      void uploadFiles(filesToUpload, response.uploads, () => {}, () => {});
 
+      setFiles([]);
+      setDestinations([]);
+      setError(null);
+      setSubmitting(false);
+      setFormKey((key) => key + 1);
       onJobCreated(response.jobId);
-
-      uploadFiles(
-        updatedFiles.filter((f) => f.serverFileId),
-        response.uploads,
-        (fileId, progress) => {
-          setFiles((prev) =>
-            prev.map((f) => (f.id === fileId ? { ...f, progress } : f)),
-          );
-        },
-        (fileId, status, uploadError) => {
-          setFiles((prev) =>
-            prev.map((f) => (f.id === fileId ? { ...f, status, error: uploadError } : f)),
-          );
-        },
-      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed');
       setSubmitting(false);
@@ -95,7 +87,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
     <div className="new-job-page">
       <div className="distribute-panels">
         <div className="panel-left">
-          <DestinationTree selected={destinations} onChange={setDestinations} />
+          <DestinationTree key={formKey} selected={destinations} onChange={setDestinations} />
         </div>
         <div className="panel-right">
           <div className="panel-right-header">Files</div>

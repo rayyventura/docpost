@@ -26,6 +26,13 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!jobId) return;
+    setSelectedJobId(jobId);
+    setTaskPage(1);
+    setStatusFilter('');
+  }, [jobId]);
+
   // Load job list
   useEffect(() => {
     if (!selectedJobId) {
@@ -152,9 +159,8 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
                   <span className={`status-badge status-${j.aggregateStatus}`}>
                     {j.aggregateStatus}
                   </span>
-                  <span className="job-submitter">{j.submitterName}</span>
-                  <span className="job-date">
-                    {formatDate(j.createdAt, true)}
+                  <span className="job-item-meta">
+                    {formatDate(j.createdAt, true)}, uploaded by {j.submitterName.toUpperCase()}
                   </span>
                 </div>
                 <div className="job-item-counts">
@@ -184,9 +190,10 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
             <span className={`status-badge status-${selectedJob.aggregateStatus}`}>
               {selectedJob.aggregateStatus}
             </span>
-            <span className="job-submitter">{selectedJob.submitterName}</span>
             <span>{selectedJob.taskCount} total items</span>
-            <span>{formatDate(selectedJob.createdAt, true)}</span>
+            <span className="job-item-meta">
+              {formatDate(selectedJob.createdAt, true)}, uploaded by {selectedJob.submitterName.toUpperCase()}
+            </span>
           </div>
           <div className="counts-bar">
             {selectedJob.counts.completed > 0 && (
