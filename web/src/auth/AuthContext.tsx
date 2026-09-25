@@ -102,6 +102,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setOnUnauthorized(() => {});
   }, [logout]);
 
+  useEffect(() => {
+    const token = sessionStorage.getItem('accessToken');
+    if (!token) return;
+
+    try {
+      const payload = decodeJwtPayload(token);
+      const exp = payload.exp as number | undefined;
+      if (!exp) return;
+
+      const msUntilExpiry = exp * 1000 - Date.now();
+      if (msUntilExpiry <= 0) {
+        logout();
+        return;
+      }
+
+      const timer = setTimeout(logout, msUntilExpiry);
+      return () => clearTimeout(timer);
+    } catch {
+      // invalid token — let the next API call handle it
+    }
+  }, [user, logout]);
+
   const value: AuthState = {
     user,
     isAuthenticated: user !== null,

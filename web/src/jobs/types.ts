@@ -41,6 +41,7 @@ export interface JobSummary {
   createdAt: string;
   taskCount: number;
   completedAt: string | null;
+  submitterName: string;
   counts: {
     pending: number;
     in_progress: number;

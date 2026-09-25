@@ -83,7 +83,7 @@ graph TB
 - **Storage:** Amazon S3 with KMS server-side encryption
 - **Queues:** Amazon SQS with dead-letter queues
 - **Database:** PostgreSQL 16
-- **Infrastructure:** Terraform (AWS — ECS Fargate, ALB, API Gateway, CloudFront, RDS, S3, SQS, Lambda)
+- **Infrastructure:** Terraform (AWS: ECS Fargate, ALB, API Gateway, CloudFront, RDS, S3, SQS, Lambda)
 - **CI/CD:** GitHub Actions
 - **Local dev:** Docker Compose (Postgres + LocalStack)
 
@@ -215,8 +215,8 @@ Docker Compose starts LocalStack with S3, SQS, and KMS. The init script (`script
 
 Infrastructure is managed with Terraform under `infra/`. Two environments are configured:
 
-- `infra/envs/dev/` — Development
-- `infra/envs/prod/` — Production
+- `infra/envs/dev/`: Development
+- `infra/envs/prod/`: Production
 
 Terraform modules cover: VPC networking, ALB, API Gateway, CloudFront CDN, ECR repositories, ECS Fargate services, RDS PostgreSQL, S3 buckets, SQS queues, and Lambda functions.
 
@@ -236,11 +236,11 @@ GitHub Actions workflows:
 
 ## Domain Model
 
-- **Job** — A batch submission containing uploaded files and their destination mappings.
-- **Task** — One file delivered to one destination. Tasks succeed or fail independently.
-- **Task lifecycle** — `Pending → In Progress → Completed` or `Failed`.
-- **Destination** — A specific binder or folder within a team where a file can be delivered.
-- **Staging** — Temporary encrypted S3 storage. Files are retained 30 days after job completion.
+- **Job**: A batch submission containing uploaded files and their destination mappings.
+- **Task**: One file delivered to one destination. Tasks succeed or fail independently.
+- **Task lifecycle**: `Pending → In Progress → Completed` or `Failed`.
+- **Destination**: A specific binder or folder within a team where a file can be delivered.
+- **Staging**: Temporary encrypted S3 storage. Files are retained 30 days after job completion.
 
 ## License
 

@@ -32,6 +32,7 @@ async function validateJwt(token: string): Promise<JwtPayload> {
 
     const jwtPayload = payload as JWTPayload & {
       email?: string;
+      name?: string;
       scope?: string;
       token_use?: 'user' | 'service';
     };
@@ -43,6 +44,7 @@ async function validateJwt(token: string): Promise<JwtPayload> {
     return {
       sub: jwtPayload.sub,
       email: jwtPayload.email,
+      name: jwtPayload.name,
       scope: jwtPayload.scope,
       token_use: jwtPayload.token_use,
       exp: jwtPayload.exp ?? 0,

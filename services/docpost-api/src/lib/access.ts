@@ -37,6 +37,30 @@ async function getServiceToken(): Promise<string> {
   return accessToken;
 }
 
+export async function visibleTeams(userToken: string): Promise<Map<string, string>> {
+  const teamsRes = await fetch(`${PLATFORM_URL}/teams?docPostEnabled=true`, {
+    headers: { Authorization: `Bearer ${userToken}` },
+  });
+  if (!teamsRes.ok) {
+    throw new Error(`Failed to load teams: ${teamsRes.status}`);
+  }
+
+  const teams = (await teamsRes.json()) as { id: string; name: string }[];
+  return new Map(teams.map((team) => [team.id, team.name]));
+}
+
+export async function teamName(teamId: string): Promise<string> {
+  const serviceToken = await getServiceToken();
+  const res = await fetch(`${PLATFORM_URL}/internal/teams/${teamId}`, {
+    headers: { Authorization: `Bearer ${serviceToken}` },
+  });
+  if (!res.ok) {
+    return teamId;
+  }
+  const body = (await res.json()) as { name?: string };
+  return body.name || teamId;
+}
+
 export async function visibleSubmitterIds(userId: string, userToken: string): Promise<Set<string>> {
   const cached = submitterCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) {

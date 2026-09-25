@@ -4,8 +4,8 @@ import { getPrivateKey, getKid } from './keys.js';
 const ISSUER = 'docpost-auth';
 const TOKEN_EXPIRY = '15m';
 
-export async function signUserToken(user: { id: string; email: string }): Promise<string> {
-  const token = await new SignJWT({ email: user.email })
+export async function signUserToken(user: { id: string; email: string; name: string }): Promise<string> {
+  const token = await new SignJWT({ email: user.email, name: user.name })
     .setProtectedHeader({ alg: 'RS256', kid: getKid() })
     .setSubject(user.id)
     .setIssuedAt()

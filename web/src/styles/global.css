@@ -1136,6 +1136,12 @@ body {
   color: var(--color-text-tertiary);
 }
 
+.job-submitter {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
 .job-item-counts {
   font-size: 0.75rem;
   color: var(--color-text-secondary);

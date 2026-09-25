@@ -306,14 +306,15 @@ module "lambda_fanout" {
   }
 
   sqs_event_source = {
-    queue_arn               = module.sqs.queue_arns["jobs"]
+    queue_arn               = module.sqs.queue_arns["upload-events"]
     batch_size              = 1
     batching_window_seconds = 0
   }
 
   environment_variables = {
-    NODE_ENV        = var.environment
-    TASK_QUEUE_URL  = module.sqs.queue_urls["tasks"]
+    NODE_ENV       = var.environment
+    S3_BUCKET      = module.s3.staging_bucket_name
+    TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
   }
 }
 
@@ -342,7 +343,10 @@ module "lambda_delivery" {
   }
 
   environment_variables = {
-    NODE_ENV = var.environment
+    NODE_ENV     = var.environment
+    S3_BUCKET    = module.s3.staging_bucket_name
+    PLATFORM_URL = "http://${module.alb.alb_dns_name}"
+    AUTH_TOKEN_URL = "http://${module.alb.alb_dns_name}/auth/token"
   }
 }
 
@@ -364,8 +368,17 @@ module "lambda_watchdog" {
     security_group_ids = [module.ecs_auth.security_group_id]
   }
 
+  sqs_event_source = {
+    queue_arn               = module.sqs.queue_arns["jobs"]
+    batch_size              = 1
+    batching_window_seconds = 0
+  }
+
   environment_variables = {
-    NODE_ENV = var.environment
+    NODE_ENV       = var.environment
+    S3_BUCKET      = module.s3.staging_bucket_name
+    TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
+    JOB_QUEUE_URL  = module.sqs.queue_urls["jobs"]
   }
 }
 
