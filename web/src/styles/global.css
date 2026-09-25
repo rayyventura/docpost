@@ -1138,7 +1138,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 0.25rem;
+}
+
+.job-item-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  text-align: right;
 }
 
 .job-date {
