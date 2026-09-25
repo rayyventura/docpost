@@ -15,7 +15,8 @@
     "lint": "turbo lint",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
-    "verify": "node scripts/verify-milestone6.mjs"
+    "verify": "node scripts/verify-milestone6.mjs",
+    "db:seed": "node scripts/seed-db.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

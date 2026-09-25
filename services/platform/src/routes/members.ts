@@ -72,8 +72,8 @@ router.get(
   },
 );
 
-// Team membership is normally granted by an admin. This endpoint exists so a new
-// account can be placed on every current team when that behavior is configured.
+// Every new account is added to every team currently in the platform database.
+// More granular permission access will be provided on demand in v2.
 router.post(
   '/internal/users/:userId/memberships',
   requireServiceAuth('memberships:write'),

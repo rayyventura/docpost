@@ -15,12 +15,8 @@ const registerSchema = z.object({
 
 const router = Router();
 
-// Team membership is normally granted by an admin. When AUTO_ASSIGN_ALL_TEAMS=true,
-// a newly created account is added to every team currently in the platform database.
-function autoAssignAllTeams(): boolean {
-  return process.env.AUTO_ASSIGN_ALL_TEAMS === 'true';
-}
-
+// Every new account is added to every team currently in the platform database.
+// More granular permission access will be provided on demand in v2.
 async function assignUserToAllTeams(userId: string): Promise<void> {
   const platformUrl = (process.env.PLATFORM_URL ?? 'http://localhost:3002').replace(/\/$/, '');
   const accessToken = await signServiceToken({
@@ -62,13 +58,11 @@ router.post('/auth/register', async (req: Request, res: Response, next: NextFunc
       .values({ email, passwordHash, name })
       .returning({ id: users.id, email: users.email, name: users.name });
 
-    if (autoAssignAllTeams()) {
-      try {
-        await assignUserToAllTeams(newUser.id);
-      } catch (err) {
-        await db.delete(users).where(eq(users.id, newUser.id));
-        throw err;
-      }
+    try {
+      await assignUserToAllTeams(newUser.id);
+    } catch (err) {
+      await db.delete(users).where(eq(users.id, newUser.id));
+      throw err;
     }
 
     res.status(201).json(newUser);

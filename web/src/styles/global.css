@@ -50,6 +50,7 @@ html {
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-y: scroll;
 }
 
 body {
@@ -537,7 +538,7 @@ body {
   border-bottom: 2px solid transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--transition);
+  transition: color var(--transition), background var(--transition), border-color 200ms ease;
   margin-bottom: -1px;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
@@ -551,6 +552,27 @@ body {
   color: var(--color-text);
   border-bottom-color: var(--color-primary);
   font-weight: 600;
+}
+
+/* ===== Tab Panels ===== */
+.tab-panel {
+  display: none;
+  animation: tabFadeIn 200ms ease-out;
+}
+
+.tab-panel--active {
+  display: block;
+}
+
+@keyframes tabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ===== New Job Page ===== */
