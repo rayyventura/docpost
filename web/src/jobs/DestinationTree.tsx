@@ -33,6 +33,32 @@ function destKey(d: { teamId: string; binderId: string; folderId?: string | null
   return `${d.teamId}:${d.binderId}:${d.folderId ?? ''}`;
 }
 
+function Expander({
+  loading,
+  expandable,
+  expanded,
+  onClick,
+}: {
+  loading: boolean;
+  expandable: boolean;
+  expanded: boolean;
+  onClick: () => void;
+}) {
+  if (!loading && !expandable) {
+    return <span className="tree-arrow tree-arrow-placeholder" aria-hidden="true" />;
+  }
+
+  return (
+    <button
+      className="tree-arrow"
+      onClick={onClick}
+      aria-label={expanded ? 'Collapse' : 'Expand'}
+    >
+      {loading ? <span className="tree-spinner" /> : expanded ? '▾' : '▸'}
+    </button>
+  );
+}
+
 export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
@@ -117,28 +143,33 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
       }
 
       const parentKey = `binder:${binder.id}`;
-      if (!foldersByParent.has(parentKey)) {
+      const cached = foldersByParent.get(parentKey);
+      if (cached && cached.length === 0) return;
+
+      if (!cached) {
         markLoading(parentKey, true);
         try {
           const data = await apiRequest<{ folders: { id: string; name: string }[] }>(
             `/destinations/binders/${binder.id}/contents`,
           );
+          const childFolders = (data.folders ?? []).map((f) => ({
+            id: f.id,
+            name: f.name,
+            binderId: binder.id,
+            binderName: binder.name,
+            teamId: binder.teamId,
+            teamName: binder.teamName,
+            parentId: null,
+          }));
           setFoldersByParent((prev) => {
             const next = new Map(prev);
-            next.set(
-              parentKey,
-              (data.folders ?? []).map((f) => ({
-                id: f.id,
-                name: f.name,
-                binderId: binder.id,
-                binderName: binder.name,
-                teamId: binder.teamId,
-                teamName: binder.teamName,
-                parentId: null,
-              })),
-            );
+            next.set(parentKey, childFolders);
             return next;
           });
+          if (childFolders.length === 0) {
+            markLoading(parentKey, false);
+            return;
+          }
         } catch (err) {
           console.error(err);
           markLoading(parentKey, false);
@@ -164,28 +195,33 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
       }
 
       const parentKey = `folder:${folder.id}`;
-      if (!foldersByParent.has(parentKey)) {
+      const cached = foldersByParent.get(parentKey);
+      if (cached && cached.length === 0) return;
+
+      if (!cached) {
         markLoading(parentKey, true);
         try {
           const data = await apiRequest<{ folders: { id: string; name: string }[] }>(
             `/destinations/folders/${folder.id}/contents`,
           );
+          const childFolders = (data.folders ?? []).map((f) => ({
+            id: f.id,
+            name: f.name,
+            binderId: folder.binderId,
+            binderName: folder.binderName,
+            teamId: folder.teamId,
+            teamName: folder.teamName,
+            parentId: folder.id,
+          }));
           setFoldersByParent((prev) => {
             const next = new Map(prev);
-            next.set(
-              parentKey,
-              (data.folders ?? []).map((f) => ({
-                id: f.id,
-                name: f.name,
-                binderId: folder.binderId,
-                binderName: folder.binderName,
-                teamId: folder.teamId,
-                teamName: folder.teamName,
-                parentId: folder.id,
-              })),
-            );
+            next.set(parentKey, childFolders);
             return next;
           });
+          if (childFolders.length === 0) {
+            markLoading(parentKey, false);
+            return;
+          }
         } catch (err) {
           console.error(err);
           markLoading(parentKey, false);
@@ -240,19 +276,12 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
       return (
         <div key={folder.id}>
           <div className="tree-row" style={{ paddingLeft: `${depth * 20}px` }}>
-            <button
-              className="tree-arrow"
+            <Expander
+              loading={isLoading}
+              expandable={hasChildren}
+              expanded={isExpanded}
               onClick={() => toggleFolder(folder)}
-              aria-label={isExpanded ? 'Collapse' : 'Expand'}
-            >
-              {isLoading ? (
-                <span className="tree-spinner" />
-              ) : hasChildren ? (
-                isExpanded ? '▾' : '▸'
-              ) : (
-                ''
-              )}
-            </button>
+            />
             <label className="tree-check-label">
               <input
                 type="checkbox"
@@ -334,19 +363,12 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
                   return (
                     <div key={binder.id}>
                       <div className="tree-row" style={{ paddingLeft: '20px' }}>
-                        <button
-                          className="tree-arrow"
+                        <Expander
+                          loading={binderLoading}
+                          expandable={hasFolders}
+                          expanded={binderExpanded}
                           onClick={() => toggleBinder(binder)}
-                          aria-label={binderExpanded ? 'Collapse' : 'Expand'}
-                        >
-                          {binderLoading ? (
-                            <span className="tree-spinner" />
-                          ) : hasFolders ? (
-                            binderExpanded ? '▾' : '▸'
-                          ) : (
-                            ''
-                          )}
-                        </button>
+                        />
                         <label className="tree-check-label">
                           <input
                             type="checkbox"

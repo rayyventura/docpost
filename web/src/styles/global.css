@@ -867,6 +867,16 @@ body {
   background: var(--color-border-light);
 }
 
+.tree-arrow-placeholder {
+  cursor: default;
+  pointer-events: none;
+}
+
+.tree-arrow-placeholder:hover {
+  color: var(--color-text-tertiary);
+  background: none;
+}
+
 .tree-spinner {
   display: inline-block;
   width: 12px;

@@ -1,7 +1,5 @@
 # **PAS-001: DocPost Blueprint**
 
-# **PAS-001 Blueprint: \[DocPost\]** 
-
 Status: Draft | Owner: Rayane Ventura | Updated: 08.08.2026
 
 # **What problem we're solving and why**
@@ -129,8 +127,6 @@ The client needs a tool, that lets a user:
 
 # **ADRs \- Architectural Decision Records**
 
-# **ADR-001: DocPost Architectural Decision Record**
-
 # **ADR-001** Edge Architecture for Public API Traffic
 
 # **Context:**
@@ -139,7 +135,6 @@ DocPost offers an HTTP REST API  that is consumed by the web SPA. Behind the API
 
 # **Decision Matrix:** How do we route internet traffic to internal services?
 
-## 
 
 | Options Considered |  |  |  |
 | :---- | :---- | :---- | :---- |
@@ -148,7 +143,6 @@ DocPost offers an HTTP REST API  that is consumed by the web SPA. Behind the API
 | **2\. API Gateway → VPC Link → Internal ALB → ECS Services** *(Selected)* | • JWT authentication at the edge • Built-in throttling and rate limiting • Internal load balancer with private services • Centralized API policies and security • Clear separation between public and private infrastructure | • Additional infrastructure components • Two routing layers increase request path complexity • More difficult debugging • Higher operational cost | Best for enterprise, healthcare, finance, or other security sensitive systems that require centralized authentication, throttling, auditing, and private backend services. |
 | 3\. API Gateway → VPC Link → Cloud Map or NLB → ECS Services | • Managed public API entry point • Edge authentication and throttling • Can eliminate the need for an Application Load Balancer • Well suited for direct service discovery integrations | • More complex service discovery • Still requires a VPC Link• Less flexible routing than an ALB • Fewer Layer 7 features • Higher operational complexity | Best for specialized architectures where services already use AWS Cloud Map or a Network Load Balancer, where Layer 4 routing is sufficient, or where avoiding an ALB is a deliberate architectural decision. |
 
-## 
 
 # **Decision:** 
 
@@ -161,8 +155,6 @@ For **DocPost**, Option 2 is the best fit because it keeps ECS services private 
 
 **Refined By**: Rayane Ventura
 
-# **ADR-002 File Upload Route**
-
 # **ADR-002** File Upload Route
 
 # **Context:**
@@ -171,7 +163,6 @@ Users can upload up to 100 files ranging from 2MB-1GB, team members can download
 
 # **Decision Matrix:** Do uploaded files travel through our internal services before reaching the storage BLOB, or are directly uploaded through presigned URLs?
 
-## 
 
 | Options Considered |  |  |  |  |
 | :---- | :---- | :---- | :---- | :---- |
@@ -189,8 +180,6 @@ DocPost may process large files, multiple parallel uploads, and asynchronous del
 • Delete abandoned uploads using an S3 lifecycle policy
 
 **Refined By:** Rayane Ventura
-
-# **ADR-003 Encryption at rest for staged files**
 
 # **ADR-003** Encryption at rest for staged files 
 
@@ -220,8 +209,6 @@ The migration requires only infrastructure changes:
 
 **Refined By:** Rayane Ventura
 
-# **ADR-004 Presigned URLs expiration policy**
-
 # **ADR-004** Presigned URLs expiration policy
 
 # **Context:**
@@ -239,8 +226,6 @@ A presigned URL  is a bearer credential: Anyone holding it can perform the signe
 * Transfers started before expiry can **finish normally**, even after expiry.
 
 **Refined By:** Rayane Ventura
-
-# **ADR-005 Task and queue for async delivery**
 
 # **ADR-005** Task and queue technology for asynchronous delivery
 
@@ -269,8 +254,6 @@ SQS Standard maps directly to the system requirements:
 
 **Refined By:** Rayane Ventura
 
-# **ADR-006 Service decomposition**
-
 # **ADR-006** Service decomposition 
 
 # **Context:**
@@ -298,8 +281,6 @@ The Document Platform boundary is required because document delivery already occ
 
 **Refined By:** Rayane Ventura
 
-# **ADR-007: Task status updates to the client**
-
 # **ADR-007**: Delivering task status updates to the client
 
 # **Context:**
@@ -321,82 +302,8 @@ One job generates up to 2,000 tasks, The job’s dashboard is a core feature, an
 
 # API Gateway WebSocket API provides near-real-time status updates while keeping all application services private. Both HTTP and WebSocket client traffic enter through AWS-managed edge services, preserving the security posture established in ADR-001.
 
-# 
 
 **Refined By:** Rayane Ventura
-
-# **ADR-008: Queue ar
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-chitecture for job processing**
 
 # **ADR-008**: Queue architecture for job processing (Topology)
 
@@ -423,9 +330,6 @@ One job generates up to 2,000 tasks, and the job needs to be acknowledged in und
 
 **Refined By:** Rayane Ventura
 
-# 
-
-# **ADR-009: Database architecture across services**
 
 # **ADR-009**: Database architecture across services (Topology)
 
@@ -452,11 +356,6 @@ DocPost consists of three services with clear data ownership. The Auth service (
 
 **Refined By:** Rayane Ventura
 
-# 
-
-# 
-
-# **ADR-010: Database engine per service**
 
 # **ADR-010**: Database engine per service
 
@@ -485,17 +384,9 @@ With one instance and 3 separate logical databases, each one could use its own e
 
 # File contents are explicitly outside the scope of the database. Uploaded files are stored in the encrypted S3 staging store, while PostgreSQL stores only their metadata, storage references, sizes, content types, and integrity checksums.
 
-# 
-
-# 
 
 **Refined By:** Rayane Ventura
 
-# 
-
-# 
-
-# **ADR-011: Workers compute model**
 
 # **ADR-011**: Workers compute model
 
@@ -524,13 +415,6 @@ Workers consume SQS messages: fan-out (one job, multiple tasks) and delivery (fe
 
 **Refined By:** Rayane Ventura
 
-# 
-
-# 
-
-# 
-
-# **ADR-012: Infrastructure as code tooling**
 
 # **ADR-012**: Infrastructure as code tooling
 
@@ -551,17 +435,6 @@ All AWS resources for DocPost (VPC, RDS, ECS services, SQS, S3, KMS, API Gateway
 
 # The deciding factors are the project’s learning objective and Terraform’s professional value. Terraform’s `plan` and `apply` workflow makes infrastructure changes explicit and reviewable: every proposed creation, update, or deletion can be inspected before it is applied.
 
-# 
-
-# 
-
-# 
-
-# 
-
-# 
-
-# **ADR-013: Worker authentication**
 
 # **ADR-013**: Worker authentication to the platform 
 
@@ -593,19 +466,6 @@ Delivery workers call the document platform POST /documents to ingest files . Ev
 
 The Authentication service becoming a runtime dependency is accepted. Delivery already has a transient-failure path through SQS retries and the DLQ, and Authentication is expected to be the smallest, most stable, and least frequently deployed service in the system.
 
-# 
-
-# 
-
-# 
-
-# 
-
-# 
-
-# 
-
-# **ADR-014: Database access layer**
 
 # **ADR-014**: Database access layer
 
@@ -635,19 +495,6 @@ All three services and lambda workers read and write to their own PostgreSQL log
 
 **Refined By:** Rayane Ventura
 
-# 
-
-# 
-
-# 
-
-# 
-
-# 
-
-# 
-
-# **ADR-015: Monorepo Setup**
 
 # **ADR-015**: Monorepo build orchestration 
 
@@ -665,7 +512,6 @@ All three services and lambda workers read and write to their own PostgreSQL log
 | **Nx** | Strongest dependency graph & affected-target analysis; generators/executors standardize new packages | Executor model abstracts the real build command away; built for much larger repos | Large, multi-team monorepos with many packages and a need for standardized scaffolding and affected-based CI |
 | **Separate repo per service** | Full build/deploy isolation; Docker build context problem disappears | Shared package needs versioning/publishing; cross-service changes span multiple PRs/repos | Services with genuinely independent release cadences and few cross-cutting changes between them |
 
-## 
 
 # **Decision:** Turborepo
 
@@ -678,8 +524,6 @@ All three services and lambda workers read and write to their own PostgreSQL log
 >   
 **Refined By:** Rayane Ventura  
 > 
-
-# **ADR-016: Fanout mechanism between Job and Task**
 
 # **ADR-016**: Fanout mechanism between job submission and task delivery 
 
@@ -706,8 +550,6 @@ All three services and lambda workers read and write to their own PostgreSQL log
 # Fanout batch publishes the messages directly to SQS queue. As there is only one subscriber, no need to for the extra overhead.
 
 **Refined By:** Rayane Ventura
-
-# **ADR-017: Job and Tasks creation post upload**
 
 # **ADR-017**: Jobs and tasks creation order relative to upload
 
@@ -742,8 +584,6 @@ All three services and lambda workers read and write to their own PostgreSQL log
 
 **Refined By:** Rayane Ventura
 
-# **ADR-018: Broswer session persistence**
-
 # **ADR-018**: Browser session persistence 
 
 # **Context:**
@@ -770,8 +610,6 @@ To make the cookie a genuine first-party cookie, the API needs to live on a subd
 
 **Refined By:** Rayane Ventura
 
-# **ADR-019: Deployment Artifact Identity**
-
 # **ADR-019**: Deployment artifact identity
 
 # **Context:**
@@ -797,8 +635,6 @@ Manual rollback, when needed, is `aws ecs update-service --task-definition <prev
 
 **Refined By:** Rayane Ventura
 
-# **ADR-020:  Where schema and bootstrap steps run**
-
 # **ADR-20**:  Where schema and bootstrap steps run
 
 # **Context:**
@@ -823,8 +659,6 @@ Bootstrap and migration stay defined in Terraform as task definitions, but they'
 
 **Refined By:** Rayane Ventura
 
-# **ADR-021:  Detecting file successfully uploaded**
-
 # **ADR-21**:  Detecting file successfully uploaded
 
 # **Context:**
@@ -843,8 +677,6 @@ Bootstrap and migration stay defined in Terraform as task definitions, but they'
 # **Decision:** Dedicated append-only status\_events table
 
 **Refined By:** Rayane Ventura
-
-# **Technical Design**
 
 # **Technical Design for PAS-001: DocPost**
 
@@ -1147,7 +979,6 @@ Part URLs are re-signable. A 1 GB file at 16 MB parts mints 64 URLs at once, and
 
 Push message shape: **`{type: 'task_update', jobId, taskId, status, failureReason?, counts: {...}}`**. Counts ride along so the client updates the aggregate without refetching.
 
-## 
 
 ## **Milestones** 
 
@@ -1234,7 +1065,6 @@ Success-metric tests from the Blueprint, run against the deployed dev environmen
 
 **Total: 38 days.**
 
-## 
 
 ## **Concurrency**
 
