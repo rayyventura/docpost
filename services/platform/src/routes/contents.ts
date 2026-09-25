@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { ForbiddenError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
-import { teamMembers, binders, folders, documents } from '../db/schema.js';
-import { requireUserAuth } from '../middleware/auth.js';
+import { teamMembers, teams, binders, folders, documents } from '../db/schema.js';
+import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -156,6 +156,76 @@ router.get(
         folders: childFolders,
         documents: folderDocs.map(formatDocument),
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/internal/destination-paths',
+  requireServiceAuth('memberships:read'),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const items = req.body?.destinations;
+      if (!Array.isArray(items)) {
+        res.status(422).json({ error: { code: 'VALIDATION_ERROR', message: 'destinations is required' } });
+        return;
+      }
+
+      const teamIds = [...new Set(items.map((item: { teamId?: string }) => item.teamId).filter(Boolean))] as string[];
+      const binderIds = [...new Set(items.map((item: { binderId?: string }) => item.binderId).filter(Boolean))] as string[];
+      const folderIds = [...new Set(items.map((item: { folderId?: string | null }) => item.folderId).filter(Boolean))] as string[];
+
+      const db = getDb();
+      const [teamRows, binderRows] = await Promise.all([
+        teamIds.length ? db.select({ id: teams.id, name: teams.name }).from(teams).where(inArray(teams.id, teamIds)) : [],
+        binderIds.length ? db.select({ id: binders.id, name: binders.name }).from(binders).where(inArray(binders.id, binderIds)) : [],
+      ]);
+      const teamNames = new Map(teamRows.map((row) => [row.id, row.name]));
+      const binderNames = new Map(binderRows.map((row) => [row.id, row.name]));
+
+      const folderInfo = new Map<string, { name: string; parentFolderId: string | null }>();
+      let pending = [...folderIds];
+      const seen = new Set<string>();
+      while (pending.length > 0) {
+        const ids = pending.filter((id) => !seen.has(id));
+        if (ids.length === 0) break;
+        ids.forEach((id) => seen.add(id));
+        const rows = await db
+          .select({ id: folders.id, name: folders.name, parentFolderId: folders.parentFolderId })
+          .from(folders)
+          .where(inArray(folders.id, ids));
+        pending = [];
+        for (const row of rows) {
+          folderInfo.set(row.id, { name: row.name, parentFolderId: row.parentFolderId });
+          if (row.parentFolderId && !seen.has(row.parentFolderId)) pending.push(row.parentFolderId);
+        }
+      }
+
+      const destinations = items.map((item: { teamId: string; binderId: string; folderId?: string | null }) => {
+        const folderChain: string[] = [];
+        let current = item.folderId ?? null;
+        const guard = new Set<string>();
+        while (current && !guard.has(current)) {
+          guard.add(current);
+          const node = folderInfo.get(current);
+          if (!node) break;
+          folderChain.unshift(node.name);
+          current = node.parentFolderId;
+        }
+        const path = [teamNames.get(item.teamId), binderNames.get(item.binderId), ...folderChain]
+          .filter((part): part is string => Boolean(part))
+          .join(' / ');
+        return {
+          teamId: item.teamId,
+          binderId: item.binderId,
+          folderId: item.folderId ?? null,
+          path,
+        };
+      });
+
+      res.json({ destinations });
     } catch (err) {
       next(err);
     }

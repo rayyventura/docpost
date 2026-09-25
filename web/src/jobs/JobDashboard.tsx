@@ -268,6 +268,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
           <thead>
             <tr>
               <th>File</th>
+              <th>Destination</th>
               <th>Status</th>
               <th>Attempts</th>
               <th>Details</th>
@@ -277,6 +278,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
             {tasks.map((t) => (
               <tr key={t.taskId} className={`task-row task-${t.status}`}>
                 <td>{t.fileName ?? t.fileId.slice(0, 8)}</td>
+                <td className="task-destination">{t.destination ?? '—'}</td>
                 <td>
                   <span className={`status-badge status-${t.status}`}>{t.status}</span>
                 </td>

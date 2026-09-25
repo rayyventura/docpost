@@ -618,6 +618,37 @@ body {
   flex-shrink: 0;
 }
 
+.send-button-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.send-button-wrap .btn:disabled {
+  pointer-events: none;
+}
+
+.send-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
+  color: var(--color-surface);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.send-button-wrap:hover .send-tooltip,
+.send-button-wrap:focus-within .send-tooltip {
+  display: block;
+}
+
 /* ===== File Picker ===== */
 .drop-zone {
   border: 2px dashed var(--color-border);
@@ -867,7 +898,12 @@ body {
   background: var(--color-border-light);
 }
 
+.tree-arrow-gap,
 .tree-arrow-placeholder {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
   cursor: default;
   pointer-events: none;
 }
@@ -1305,6 +1341,12 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-text-secondary);
+}
+
+.task-destination {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  max-width: 28rem;
 }
 
 .failure-reason {
