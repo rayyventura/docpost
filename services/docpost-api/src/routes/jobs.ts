@@ -6,15 +6,11 @@ import { getDb } from '../db/index.js';
 import { jobs, files, tasks } from '../db/schema.js';
 import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
-import { visibleSubmitterIds } from '../lib/access.js';
+import { teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
 
 const router = Router();
 
-const PLATFORM_URL = process.env.PLATFORM_URL ?? 'http://localhost:3002';
-const AUTH_TOKEN_URL = process.env.AUTH_TOKEN_URL ?? 'http://localhost:3001/auth/token';
-const SERVICE_CLIENT_ID = process.env.SERVICE_CLIENT_ID ?? 'delivery-worker';
-const SERVICE_CLIENT_SECRET = process.env.SERVICE_CLIENT_SECRET ?? 'delivery-worker-local-secret';
 const STAGING_DEADLINE_MINUTES = parseInt(process.env.STAGING_DEADLINE_MINUTES ?? '30', 10);
 
 const ALLOWED_CONTENT_TYPES = [
@@ -53,59 +49,11 @@ const createJobSchema = z.object({
   { message: 'fileIndex out of range' },
 );
 
-// ---------- Service token cache ----------
-
-let cachedServiceToken: string | null = null;
-let cachedServiceTokenExp = 0;
-
-async function getServiceToken(): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  if (cachedServiceToken && cachedServiceTokenExp > now + 30) {
-    return cachedServiceToken;
-  }
-
-  const res = await fetch(AUTH_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientId: SERVICE_CLIENT_ID,
-      clientSecret: SERVICE_CLIENT_SECRET,
-      scope: 'memberships:read',
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to get service token: ${res.status}`);
-  }
-
-  const { accessToken } = (await res.json()) as { accessToken: string };
-  const parts = accessToken.split('.');
-  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-  cachedServiceToken = accessToken;
-  cachedServiceTokenExp = payload.exp ?? 0;
-  return accessToken;
-}
-
 // ---------- Helpers ----------
 
 function bearerToken(req: Request): string {
   const header = req.headers.authorization ?? '';
   return header.startsWith('Bearer ') ? header.slice(7) : '';
-}
-
-async function checkTeamMembership(
-  teamId: string,
-  userId: string,
-): Promise<boolean> {
-  try {
-    const token = await getServiceToken();
-    const res = await fetch(`${PLATFORM_URL}/teams/${teamId}/members/${userId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return res.status === 200;
-  } catch {
-    return false;
-  }
 }
 
 // ---------- POST /jobs ----------
@@ -120,16 +68,14 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
     const { files: fileInputs, mappings } = parsed.data;
     const userId = req.user!.sub;
 
-    // Collect unique teamIds and validate membership
+    // Same teams the user can already browse and download from.
+    const allowedTeams = await visibleTeams(bearerToken(req));
     const uniqueTeamIds = [...new Set(mappings.flatMap((m) => m.destinations.map((d) => d.teamId)))];
 
-    const membershipChecks = await Promise.all(
-      uniqueTeamIds.map((teamId) => checkTeamMembership(teamId, userId)),
-    );
-
-    for (let i = 0; i < uniqueTeamIds.length; i++) {
-      if (!membershipChecks[i]) {
-        throw new ForbiddenError(`Not a member of team ${uniqueTeamIds[i]}`);
+    for (const teamId of uniqueTeamIds) {
+      if (!allowedTeams.has(teamId)) {
+        const name = await teamName(teamId);
+        throw new ForbiddenError(`Not a member of team ${name}`);
       }
     }
 
@@ -140,12 +86,14 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
     const nextCheckAt = new Date(now.getTime() + 60_000); // 60s delay
 
     const db = getDb();
+    const userName = req.user!.name ?? req.user!.email ?? 'Unknown';
 
     // Single transaction: insert job, files, tasks
     const result = await db.transaction(async (tx) => {
       // Insert job
       const [job] = await tx.insert(jobs).values({
         submittedByUserId: userId,
+        submitterName: userName,
         taskCount: totalTasks,
         nextCheckAt,
       }).returning({ id: jobs.id });
@@ -280,6 +228,7 @@ router.get('/jobs', requireUserAuth, async (req: Request, res: Response, next: N
         createdAt: j.createdAt,
         taskCount: j.taskCount,
         completedAt: j.completedAt,
+        submitterName: j.submitterName ?? 'Unknown',
         counts,
         aggregateStatus: computeAggregateStatus(counts),
       };
@@ -331,6 +280,7 @@ router.get('/jobs/:id', requireUserAuth, async (req: Request, res: Response, nex
       createdAt: job.createdAt,
       taskCount: job.taskCount,
       completedAt: job.completedAt,
+      submitterName: job.submitterName ?? 'Unknown',
       counts,
       aggregateStatus: computeAggregateStatus(counts),
     });

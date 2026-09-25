@@ -17,6 +17,7 @@ export const jobs = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     submittedByUserId: uuid('submitted_by_user_id').notNull(),
+    submitterName: text('submitter_name'),
     taskCount: integer('task_count').notNull(),
     nextCheckAt: timestamp('next_check_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),

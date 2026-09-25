@@ -152,6 +152,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
                   <span className={`status-badge status-${j.aggregateStatus}`}>
                     {j.aggregateStatus}
                   </span>
+                  <span className="job-submitter">{j.submitterName}</span>
                   <span className="job-date">
                     {formatDate(j.createdAt, true)}
                   </span>
@@ -183,6 +184,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
             <span className={`status-badge status-${selectedJob.aggregateStatus}`}>
               {selectedJob.aggregateStatus}
             </span>
+            <span className="job-submitter">{selectedJob.submitterName}</span>
             <span>{selectedJob.taskCount} total items</span>
             <span>{formatDate(selectedJob.createdAt, true)}</span>
           </div>

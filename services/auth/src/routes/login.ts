@@ -31,6 +31,7 @@ router.post('/auth/login', async (req: Request, res: Response, next: NextFunctio
       .select({
         id: users.id,
         email: users.email,
+        name: users.name,
         passwordHash: users.passwordHash,
       })
       .from(users)
@@ -45,7 +46,7 @@ router.post('/auth/login', async (req: Request, res: Response, next: NextFunctio
       throw new UnauthorizedError('Invalid credentials');
     }
 
-    const accessToken = await signUserToken({ id: user.id, email: user.email });
+    const accessToken = await signUserToken({ id: user.id, email: user.email, name: user.name });
 
     res.status(200).json({
       accessToken,

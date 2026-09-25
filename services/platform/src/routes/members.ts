@@ -10,6 +10,34 @@ const USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const router = Router();
 
 router.get(
+  '/internal/teams/:teamId',
+  requireServiceAuth('memberships:read'),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const teamId = req.params.teamId as string;
+      if (!USER_ID_PATTERN.test(teamId)) {
+        throw new ValidationError('Invalid team id');
+      }
+
+      const db = getDb();
+      const [team] = await db
+        .select({ id: teams.id, name: teams.name })
+        .from(teams)
+        .where(eq(teams.id, teamId));
+
+      if (!team) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
+        return;
+      }
+
+      res.json(team);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
   '/teams/:teamId/members',
   requireServiceAuth('memberships:read'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {

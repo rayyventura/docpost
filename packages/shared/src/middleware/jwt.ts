@@ -6,6 +6,7 @@ import { UnauthorizedError } from '../errors.js';
 export interface JwtPayload {
   sub: string;
   email?: string;
+  name?: string;
   scope?: string;
   token_use?: 'user' | 'service';
   exp: number;
@@ -61,6 +62,7 @@ function mapPayload(payload: JWTPayload): JwtPayload {
   return {
     sub: payload.sub ?? '',
     email: payload.email as string | undefined,
+    name: payload.name as string | undefined,
     scope: payload.scope as string | undefined,
     token_use: payload.token_use as 'user' | 'service' | undefined,
     exp: payload.exp ?? 0,
