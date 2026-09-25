@@ -6,7 +6,9 @@ import { getDb, closeDb, schema } from './index.js';
 
 const USER_1_ID = '00000000-0000-0000-0000-000000000001';
 const USER_2_ID = '00000000-0000-0000-0000-000000000002';
+const USER_3_ID = '00000000-0000-0000-0000-000000000003';
 const USER_RAY_ID = '00000000-0000-0000-0000-000000000004';
+const SEEDED_USER_IDS = [USER_1_ID, USER_2_ID, USER_3_ID, USER_RAY_ID];
 
 type FolderRow = typeof schema.folders.$inferSelect;
 
@@ -41,6 +43,9 @@ async function insertFolders(
     .returning();
 }
 
+// Seeds the team hierarchy used locally: teams, binders, folders, and sample documents.
+// New accounts are granted access to these teams at registration.
+// More granular permission access will be provided on demand in v2.
 async function seed() {
   const db = getDb();
   console.log('Seeding platform database...');
@@ -78,15 +83,11 @@ async function seed() {
 
   console.log(`Created ${allTeams.length} teams`);
 
-  // ── Memberships ────────────────────────────────────────────────────
-  const memberships = [
-    { teamId: cardiology.id, userId: USER_1_ID },
-    { teamId: oncology.id, userId: USER_1_ID },
-    { teamId: neurology.id, userId: USER_1_ID },
-    { teamId: cardiology.id, userId: USER_2_ID },
-    { teamId: oncology.id, userId: USER_2_ID },
-    ...allTeams.map((t) => ({ teamId: t.id, userId: USER_RAY_ID })),
-  ];
+  // Every existing seed account can use every team.
+  // More granular permission access will be provided on demand in v2.
+  const memberships = allTeams.flatMap((team) =>
+    SEEDED_USER_IDS.map((userId) => ({ teamId: team.id, userId })),
+  );
   await db.insert(schema.teamMembers).values(memberships);
   console.log(`Created ${memberships.length} memberships`);
 

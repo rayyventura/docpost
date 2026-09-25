@@ -33,8 +33,12 @@ export function DistributePage() {
         </button>
       </div>
 
-      {activeTab === 'new' && <NewJobPage onJobCreated={handleJobCreated} />}
-      {activeTab === 'deliveries' && <JobDashboard jobId={focusJobId} />}
+      <div className={`tab-panel ${activeTab === 'new' ? 'tab-panel--active' : ''}`}>
+        <NewJobPage onJobCreated={handleJobCreated} />
+      </div>
+      <div className={`tab-panel ${activeTab === 'deliveries' ? 'tab-panel--active' : ''}`}>
+        <JobDashboard jobId={focusJobId} />
+      </div>
     </div>
   );
 }

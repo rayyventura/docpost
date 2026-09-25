@@ -189,8 +189,9 @@ module "ecs_auth" {
   }
 
   environment_variables = {
-    NODE_ENV = var.environment
-    PORT     = "3000"
+    NODE_ENV     = var.environment
+    PORT         = "3000"
+    PLATFORM_URL = "http://${module.alb.alb_dns_name}"
   }
 }
 
