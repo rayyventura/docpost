@@ -222,6 +222,12 @@ resource "aws_ecs_service" "service" {
     assign_public_ip = false
   }
 
+  load_balancer {
+    target_group_arn = var.target_group_arn
+    container_name   = var.service_name
+    container_port   = var.container_port
+  }
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true

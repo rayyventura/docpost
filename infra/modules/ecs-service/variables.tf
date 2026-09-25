@@ -94,6 +94,11 @@ variable "task_role_policy_arns" {
   default     = []
 }
 
+variable "target_group_arn" {
+  description = "ARN of the ALB target group that receives traffic for this service."
+  type        = string
+}
+
 variable "alb_security_group_ids" {
   description = "Security group IDs of the ALB(s) allowed to reach this service."
   type        = list(string)
