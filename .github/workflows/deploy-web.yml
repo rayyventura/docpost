@@ -2,6 +2,8 @@ name: Deploy Web SPA
 
 on:
   workflow_dispatch:
+  # environment.yml (action: up)
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -16,8 +18,12 @@ on:
       - '.github/workflows/deploy-web.yml'
       - 'turbo.json'
 
+# The API base, bucket and distribution come from Parameter Store
+# (/docpost/dev/..., written by infra/envs/dev-base), so they follow the
+# infrastructure instead of repository variables. Only the role is a secret.
 env:
   AWS_REGION: us-east-1
+  ENVIRONMENT: dev
   DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
 
 jobs:
@@ -36,7 +42,8 @@ jobs:
 
   build-deploy:
     needs: lint-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # push to main, a manual run on main, or a call from a workflow on main
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -44,25 +51,47 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+      - name: Deploy role not configured
+        if: env.DEPLOY_ENABLED != 'true'
+        run: echo "::warning::AWS_DEPLOY_ROLE_ARN is not set, so the SPA is not built or deployed."
       - uses: actions/setup-node@v4
+        if: env.DEPLOY_ENABLED == 'true'
         with:
           node-version: 22
           cache: 'npm'
-      - run: npm ci
-      - name: Build SPA
-        env:
-          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
-        run: npx turbo build --filter=@docpost/web
       - name: Configure AWS credentials
         if: env.DEPLOY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Read environment from Parameter Store
+        if: env.DEPLOY_ENABLED == 'true'
+        id: ssm
+        run: |
+          get() { aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/$1" --query Parameter.Value --output text; }
+          API_BASE="$(get api_base)"
+          SPA_BUCKET="$(get spa_bucket_name)"
+          DISTRIBUTION_ID="$(get cloudfront_distribution_id)"
+          {
+            echo "api_base=${API_BASE}"
+            echo "spa_bucket=${SPA_BUCKET}"
+            echo "distribution_id=${DISTRIBUTION_ID}"
+          } >> "$GITHUB_OUTPUT"
+      - run: npm ci
+        if: env.DEPLOY_ENABLED == 'true'
+      - name: Build SPA
+        if: env.DEPLOY_ENABLED == 'true'
+        env:
+          VITE_API_BASE: ${{ steps.ssm.outputs.api_base }}
+        run: |
+          echo "VITE_API_BASE=$VITE_API_BASE"
+          npx turbo build --filter=@docpost/web
       - name: Deploy to S3 + invalidate CloudFront
         if: env.DEPLOY_ENABLED == 'true'
+        env:
+          SPA_BUCKET: ${{ steps.ssm.outputs.spa_bucket }}
+          DISTRIBUTION_ID: ${{ steps.ssm.outputs.distribution_id }}
         run: |
-          aws s3 sync web/dist/ s3://${{ secrets.SPA_BUCKET_NAME }}/ --delete
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*"
+          aws s3 sync web/dist/ "s3://${SPA_BUCKET}/" --delete
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"

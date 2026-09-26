@@ -2,6 +2,8 @@ name: Deploy Workers
 
 on:
   workflow_dispatch:
+  # environment.yml (action: up)
+  workflow_call:
   push:
     branches: [main]
     paths:
@@ -17,6 +19,8 @@ on:
       - '.github/workflows/deploy-workers.yml'
       - 'turbo.json'
 
+# Function names come from Parameter Store (/docpost/dev/lambda/<worker>,
+# written by infra/envs/dev). Only the role is a secret.
 env:
   AWS_REGION: us-east-1
   ENVIRONMENT: dev
@@ -41,7 +45,8 @@ jobs:
 
   build-deploy:
     needs: lint-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # push to main, a manual run on main, or a call from a workflow on main
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -67,13 +72,25 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy to Lambda
         if: env.DEPLOY_ENABLED == 'true'
+        env:
+          WORKER: ${{ matrix.worker }}
         run: |
-          cd workers/${{ matrix.worker }}
+          # Missing parameter = dev is down; the next `up` deploys the worker.
+          if ! out="$(aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/lambda/${WORKER}" --query Parameter.Value --output text 2>&1)"; then
+            if grep -q ParameterNotFound <<<"$out"; then
+              echo "::notice::dev is down (no /docpost/${ENVIRONMENT}/lambda/${WORKER}); nothing to deploy."
+              exit 0
+            fi
+            echo "$out" >&2
+            exit 1
+          fi
+          FUNCTION="$out"
+          cd "workers/${WORKER}"
           zip -j function.zip dist/handler.js
-          FUNCTION=docpost-${{ env.ENVIRONMENT }}-${{ matrix.worker }}
-          if [ "${{ matrix.worker }}" = "ws" ]; then FUNCTION=docpost-${{ env.ENVIRONMENT }}-ws-lifecycle; fi
           aws lambda update-function-code \
             --function-name "$FUNCTION" \
             --zip-file fileb://function.zip \
-            --publish
-          echo "Deployed ${{ matrix.worker }} worker"
+            --publish \
+            --query 'FunctionArn' --output text
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION"
+          echo "Deployed ${WORKER} worker to ${FUNCTION}"

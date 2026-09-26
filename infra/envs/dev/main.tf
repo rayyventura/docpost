@@ -145,6 +145,27 @@ module "rds_instance" {
 }
 
 # =============================================================================
+# Database bootstrap (one-off ECS task)
+# Creates the service databases and roles to match the per-service secrets.
+# Started by scripts/db-bootstrap.sh from CI, never by terraform apply.
+# =============================================================================
+module "db_bootstrap" {
+  source = "../../modules/db-bootstrap"
+
+  project_name = var.project_name
+  environment  = var.environment
+  region       = var.region
+  vpc_id       = module.network.vpc_id
+
+  db_host           = module.rds_instance.db_instance_address
+  db_port           = module.rds_instance.db_instance_port
+  master_username   = module.rds_instance.master_username
+  master_secret_arn = module.rds_instance.master_secret_arn
+
+  service_secret_arns = module.rds_instance.secret_arns
+}
+
+# =============================================================================
 # ALB
 # =============================================================================
 module "alb" {
@@ -478,6 +499,27 @@ resource "aws_ssm_parameter" "lambda_function" {
   description = "Lambda function name for the ${each.key} worker."
   type        = "String"
   value       = each.value
+}
+
+resource "aws_ssm_parameter" "private_subnet_ids" {
+  name        = "${local.ssm_prefix}/private_subnet_ids"
+  description = "Private subnets for one-off ECS tasks (comma-separated)."
+  type        = "StringList"
+  value       = join(",", module.network.private_subnet_ids)
+}
+
+resource "aws_ssm_parameter" "db_bootstrap_task_family" {
+  name        = "${local.ssm_prefix}/db_bootstrap/task_family"
+  description = "Task definition family of the database bootstrap task."
+  type        = "String"
+  value       = module.db_bootstrap.task_definition_family
+}
+
+resource "aws_ssm_parameter" "db_task_security_group_id" {
+  name        = "${local.ssm_prefix}/db_bootstrap/security_group_id"
+  description = "Security group for one-off database tasks (bootstrap, migrations, seed)."
+  type        = "String"
+  value       = module.db_bootstrap.security_group_id
 }
 
 resource "aws_ssm_parameter" "rds_instance_identifier" {

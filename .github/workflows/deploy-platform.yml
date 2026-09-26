@@ -6,6 +6,9 @@ on:
     paths:
       - 'services/platform/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-platform.yml'
       - 'turbo.json'
@@ -14,14 +17,21 @@ on:
     paths:
       - 'services/platform/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-platform.yml'
       - 'turbo.json'
+  # Manual redeploy, and environment.yml (action: up) after a rebuild.
+  workflow_dispatch:
+  workflow_call:
 
+# Cluster, service and repository come from Parameter Store (/docpost/dev/...),
+# so a rebuilt dev needs no secret or variable changes. Only the role is a secret.
 env:
   AWS_REGION: us-east-1
   ENVIRONMENT: dev
-  ECS_CLUSTER: docpost-dev-cluster
   SERVICE_NAME: platform
   SERVICE_PORT: 3002
   DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
@@ -42,7 +52,8 @@ jobs:
 
   build-push:
     needs: lint-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # push to main, a manual run on main, or a call from a workflow on main
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -59,19 +70,18 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
         if: env.DEPLOY_ENABLED == 'true'
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build and push Docker image
         if: env.DEPLOY_ENABLED == 'true'
         id: push
         env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          IMAGE="$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:$IMAGE_TAG"
-          docker build -f services/${{ env.SERVICE_NAME }}/Dockerfile -t "$IMAGE" -t "$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:latest" .
+          REPOSITORY="$(aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/ecr/${SERVICE_NAME}" --query Parameter.Value --output text)"
+          IMAGE="$REPOSITORY:$IMAGE_TAG"
+          docker build -f "services/${SERVICE_NAME}/Dockerfile" -t "$IMAGE" -t "$REPOSITORY:latest" .
           docker push "$IMAGE"
-          docker push "$ECR_REGISTRY/docpost/${{ env.SERVICE_NAME }}:latest"
+          docker push "$REPOSITORY:latest"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
@@ -89,6 +99,21 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy to ECS
+      # The teardown layer writes /docpost/dev/ecs_cluster. When it is missing,
+      # dev is down: the image is in ECR and the next `up` deploys it.
+      - name: Check that dev is up
         if: env.DEPLOY_ENABLED == 'true'
-        run: bash scripts/ci-deploy-service.sh ${{ env.SERVICE_NAME }} ${{ needs.build-push.outputs.image }}
+        id: dev
+        run: |
+          if out="$(aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/ecs_cluster" 2>&1)"; then
+            echo "up=true" >> "$GITHUB_OUTPUT"
+          elif grep -q ParameterNotFound <<<"$out"; then
+            echo "up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::dev is down (no /docpost/${ENVIRONMENT}/ecs_cluster); image pushed, nothing to roll."
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+      - name: Deploy to ECS
+        if: env.DEPLOY_ENABLED == 'true' && steps.dev.outputs.up == 'true'
+        run: bash scripts/ci-deploy-service.sh "${SERVICE_NAME}" "${{ needs.build-push.outputs.image }}"

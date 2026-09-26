@@ -16,7 +16,12 @@
     "test": "turbo test",
     "typecheck": "turbo typecheck",
     "verify": "node scripts/verify-milestone6.mjs",
-    "db:seed": "node scripts/seed-db.mjs"
+    "db:seed": "node scripts/seed-db.mjs",
+    "infra:dev:up": "gh workflow run environment.yml --ref main -f action=up && echo 'Started. Follow it with: gh run watch'",
+    "infra:dev:down": "gh workflow run environment.yml --ref main -f action=down && echo 'Started. Follow it with: gh run watch'",
+    "infra:dev:up:local": "terraform -chdir=infra/envs/dev-base init -input=false && terraform -chdir=infra/envs/dev-base apply && terraform -chdir=infra/envs/dev init -input=false && terraform -chdir=infra/envs/dev apply",
+    "infra:dev:down:local": "terraform -chdir=infra/envs/dev init -input=false && terraform -chdir=infra/envs/dev destroy",
+    "infra:dev:status": "terraform -chdir=infra/envs/dev init -input=false >/dev/null && terraform -chdir=infra/envs/dev state list"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
