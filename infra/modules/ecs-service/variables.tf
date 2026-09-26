@@ -105,6 +105,12 @@ variable "alb_security_group_ids" {
   default     = []
 }
 
+variable "wait_for_steady_state" {
+  description = "Block apply until the service's tasks are running. Leave false where images may not be pushed yet, or apply waits on tasks that cannot start."
+  type        = bool
+  default     = true
+}
+
 variable "log_retention_days" {
   description = "Number of days to retain CloudWatch log events."
   type        = number

@@ -8,19 +8,40 @@ variable "environment" {
   type        = string
 }
 
+variable "create_api" {
+  description = "Create the HTTP API and its default stage. Set false to attach routes to an API owned by another stack (see api_id)."
+  type        = bool
+  default     = true
+}
+
+variable "api_id" {
+  description = "ID of an existing HTTP API. Required when create_api is false."
+  type        = string
+  default     = null
+}
+
+variable "create_alb_integration" {
+  description = "Create the VPC Link, ALB integration, JWT authorizer, and routes. Set false for a stack that only owns the API itself."
+  type        = bool
+  default     = true
+}
+
 variable "private_subnet_ids" {
-  description = "Private subnet IDs for the VPC Link."
+  description = "Private subnet IDs for the VPC Link. Required when create_alb_integration is true."
   type        = list(string)
+  default     = []
 }
 
 variable "vpc_link_security_group_ids" {
-  description = "Security group IDs for the VPC Link."
+  description = "Security group IDs for the VPC Link. Required when create_alb_integration is true."
   type        = list(string)
+  default     = []
 }
 
 variable "alb_listener_arn" {
-  description = "ARN of the ALB listener to integrate with."
+  description = "ARN of the ALB listener to integrate with. Required when create_alb_integration is true."
   type        = string
+  default     = null
 }
 
 variable "cors_allow_origins" {
