@@ -21,11 +21,16 @@ concurrency:
   group: terraform-dev
   cancel-in-progress: false
 
+# Two roles from infra/envs/dev-base/github_terraform.tf:
+#   AWS_TERRAFORM_PLAN_ROLE_ARN  read-only, trusted for pull requests and main
+#   AWS_TERRAFORM_ROLE_ARN       read-write, trusted only for jobs in the
+#                                GitHub environment "dev" (main only)
 env:
   AWS_REGION: us-east-1
   TF_VERSION: '1.9'
   TF_INPUT: 'false'
-  DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
+  PLAN_ENABLED: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN != '' }}
+  APPLY_ENABLED: ${{ secrets.AWS_TERRAFORM_ROLE_ARN != '' }}
 
 jobs:
   plan:
@@ -49,19 +54,19 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.PLAN_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Terraform Init
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.PLAN_ENABLED == 'true'
         run: terraform init
       - name: Terraform Validate
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.PLAN_ENABLED == 'true'
         run: terraform validate
       - name: Terraform Plan
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.PLAN_ENABLED == 'true'
         id: plan
         env:
           RDS_MASTER_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
@@ -93,25 +98,30 @@ jobs:
   # migration never stops halfway with an object owned by two states.
   apply:
     needs: plan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-    environment: production
+    # The apply role only trusts this environment. Restrict it to main under
+    # Settings -> Environments -> dev -> Deployment branches.
+    environment: dev
     steps:
       - uses: actions/checkout@v4
+      - name: Apply role not configured
+        if: env.APPLY_ENABLED != 'true'
+        run: echo "::warning::AWS_TERRAFORM_ROLE_ARN is not set, so nothing is applied. See infra/envs/dev-base/github_terraform.tf."
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Require RDS master password
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         env:
           RDS_MASTER_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
         run: |
@@ -120,19 +130,19 @@ jobs:
             exit 1
           fi
       - name: Terraform Init (dev-base)
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         working-directory: infra/envs/dev-base
         run: terraform init
       - name: Terraform Apply (dev-base)
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         working-directory: infra/envs/dev-base
         run: terraform apply -auto-approve
       - name: Terraform Init (dev)
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         working-directory: infra/envs/dev
         run: terraform init
       - name: Terraform Apply (dev)
-        if: env.DEPLOY_ENABLED == 'true'
+        if: env.APPLY_ENABLED == 'true'
         working-directory: infra/envs/dev
         env:
           TF_VAR_rds_master_password: ${{ secrets.RDS_MASTER_PASSWORD }}
