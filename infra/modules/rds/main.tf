@@ -11,6 +11,12 @@ locals {
   }
 
   service_names = ["auth_service", "platform_service", "docpost_service"]
+
+  # Secrets are created here unless another stack owns them (create_secrets = false).
+  master_secret_arn = var.create_secrets ? aws_secretsmanager_secret.master_password[0].arn : var.master_secret_arn
+  service_secret_arns = var.create_secrets ? {
+    for name in local.service_names : name => aws_secretsmanager_secret.service_credentials[name].arn
+  } : var.service_secret_arns
 }
 
 # -----------------------------------------------------------------------------
@@ -62,14 +68,18 @@ resource "aws_security_group" "rds" {
 # Master Password — Secrets Manager
 # -----------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "master_password" {
+  count = var.create_secrets ? 1 : 0
+
   name        = "${var.project_name}/${var.environment}/rds/master-password"
   description = "Master password for the ${var.project_name} RDS instance"
+
+  recovery_window_in_days = var.secret_recovery_window_days
 
   tags = local.common_tags
 }
 
 resource "aws_secretsmanager_secret_version" "master_password" {
-  secret_id     = aws_secretsmanager_secret.master_password.id
+  secret_id     = local.master_secret_arn
   secret_string = var.master_password
 }
 
@@ -97,8 +107,8 @@ resource "aws_db_instance" "main" {
   multi_az            = var.multi_az
   publicly_accessible = false
 
-  backup_retention_period = var.backup_retention_period
-  skip_final_snapshot     = var.skip_final_snapshot
+  backup_retention_period   = var.backup_retention_period
+  skip_final_snapshot       = var.skip_final_snapshot
   final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.project_name}-${var.environment}-final-snapshot"
 
   performance_insights_enabled = false
@@ -112,10 +122,12 @@ resource "aws_db_instance" "main" {
 # Per-Service Secrets (placeholder values — actual creds set by db-bootstrap)
 # -----------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "service_credentials" {
-  for_each = toset(local.service_names)
+  for_each = var.create_secrets ? toset(local.service_names) : toset([])
 
   name        = "${var.project_name}/${var.environment}/rds/${each.key}"
   description = "Database credentials for ${each.key}"
+
+  recovery_window_in_days = var.secret_recovery_window_days
 
   tags = local.common_tags
 }
@@ -123,7 +135,7 @@ resource "aws_secretsmanager_secret" "service_credentials" {
 resource "aws_secretsmanager_secret_version" "service_credentials" {
   for_each = toset(local.service_names)
 
-  secret_id = aws_secretsmanager_secret.service_credentials[each.key].id
+  secret_id = local.service_secret_arns[each.key]
   secret_string = jsonencode({
     username = each.key
     password = "PLACEHOLDER_SET_BY_BOOTSTRAP"
@@ -217,8 +229,8 @@ resource "aws_iam_role_policy" "rds_proxy_secrets" {
           "secretsmanager:ListSecretVersionIds"
         ]
         Resource = concat(
-          [aws_secretsmanager_secret.master_password.arn],
-          [for s in aws_secretsmanager_secret.service_credentials : s.arn]
+          [local.master_secret_arn],
+          values(local.service_secret_arns)
         )
       }
     ]
@@ -244,7 +256,7 @@ resource "aws_db_proxy" "main" {
     auth_scheme = "SECRETS"
     description = "Master credentials"
     iam_auth    = "REQUIRED"
-    secret_arn  = aws_secretsmanager_secret.master_password.arn
+    secret_arn  = local.master_secret_arn
   }
 
   dynamic "auth" {
@@ -253,7 +265,7 @@ resource "aws_db_proxy" "main" {
       auth_scheme = "SECRETS"
       description = "${auth.key} credentials"
       iam_auth    = "REQUIRED"
-      secret_arn  = aws_secretsmanager_secret.service_credentials[auth.key].arn
+      secret_arn  = local.service_secret_arns[auth.key]
     }
   }
 

@@ -15,9 +15,16 @@ on:
       - '.github/workflows/infra.yml'
       - 'turbo.json'
 
+# dev-base and dev share one state bucket and lock table, and dev reads
+# dev-base's outputs. Never run two of these at once.
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   TF_VERSION: '1.9'
+  TF_INPUT: 'false'
   DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
 
 jobs:
@@ -28,8 +35,11 @@ jobs:
       contents: read
       pull-requests: write
     strategy:
+      fail-fast: false
       matrix:
-        environment: [dev]
+        # dev reads dev-base through terraform_remote_state, so its plan only
+        # succeeds once dev-base has been applied.
+        environment: [dev-base, dev]
     defaults:
       run:
         working-directory: infra/envs/${{ matrix.environment }}
@@ -53,7 +63,13 @@ jobs:
       - name: Terraform Plan
         if: env.DEPLOY_ENABLED == 'true'
         id: plan
-        run: terraform plan -no-color -out=tfplan
+        env:
+          RDS_MASTER_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+        run: |
+          if [ "${{ matrix.environment }}" = "dev" ] && [ -n "$RDS_MASTER_PASSWORD" ]; then
+            export TF_VAR_rds_master_password="$RDS_MASTER_PASSWORD"
+          fi
+          terraform plan -no-color -out=tfplan
         continue-on-error: true
       - name: Comment PR with plan
         if: github.event_name == 'pull_request'
@@ -72,6 +88,9 @@ jobs:
               body: output
             });
 
+  # One job, in order: dev-base first (dev reads its state), then dev.
+  # Nothing is applied unless both stacks can be, so the dev -> dev-base
+  # migration never stops halfway with an object owned by two states.
   apply:
     needs: plan
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -80,12 +99,6 @@ jobs:
       id-token: write
       contents: read
     environment: production
-    strategy:
-      matrix:
-        environment: [dev]
-    defaults:
-      run:
-        working-directory: infra/envs/${{ matrix.environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -97,9 +110,30 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Terraform Init
+      - name: Require RDS master password
         if: env.DEPLOY_ENABLED == 'true'
+        env:
+          RDS_MASTER_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+        run: |
+          if [ -z "$RDS_MASTER_PASSWORD" ]; then
+            echo "::error::RDS_MASTER_PASSWORD is not set. dev cannot be applied, so dev-base is not applied either. Apply both locally (dev-base first) or add the secret."
+            exit 1
+          fi
+      - name: Terraform Init (dev-base)
+        if: env.DEPLOY_ENABLED == 'true'
+        working-directory: infra/envs/dev-base
         run: terraform init
-      - name: Terraform Apply
+      - name: Terraform Apply (dev-base)
         if: env.DEPLOY_ENABLED == 'true'
+        working-directory: infra/envs/dev-base
+        run: terraform apply -auto-approve
+      - name: Terraform Init (dev)
+        if: env.DEPLOY_ENABLED == 'true'
+        working-directory: infra/envs/dev
+        run: terraform init
+      - name: Terraform Apply (dev)
+        if: env.DEPLOY_ENABLED == 'true'
+        working-directory: infra/envs/dev
+        env:
+          TF_VAR_rds_master_password: ${{ secrets.RDS_MASTER_PASSWORD }}
         run: terraform apply -auto-approve
