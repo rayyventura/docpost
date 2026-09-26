@@ -7,12 +7,14 @@ on:
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - '.github/actions/terraform-dev/**'
       - 'turbo.json'
   pull_request:
     branches: [main]
     paths:
       - 'infra/**'
       - '.github/workflows/infra.yml'
+      - '.github/actions/terraform-dev/**'
       - 'turbo.json'
 
 # dev-base and dev share one state bucket and lock table, and dev reads
@@ -111,39 +113,17 @@ jobs:
       - name: Apply role not configured
         if: env.APPLY_ENABLED != 'true'
         run: echo "::warning::AWS_TERRAFORM_ROLE_ARN is not set, so nothing is applied. See infra/envs/dev-base/github_terraform.tf."
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
       - name: Configure AWS credentials
         if: env.APPLY_ENABLED == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Require RDS master password
+          role-duration-seconds: 7200
+      - name: Apply dev-base, then dev
         if: env.APPLY_ENABLED == 'true'
-        env:
-          RDS_MASTER_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
-        run: |
-          if [ -z "$RDS_MASTER_PASSWORD" ]; then
-            echo "::error::RDS_MASTER_PASSWORD is not set. dev cannot be applied, so dev-base is not applied either. Apply both locally (dev-base first) or add the secret."
-            exit 1
-          fi
-      - name: Terraform Init (dev-base)
-        if: env.APPLY_ENABLED == 'true'
-        working-directory: infra/envs/dev-base
-        run: terraform init
-      - name: Terraform Apply (dev-base)
-        if: env.APPLY_ENABLED == 'true'
-        working-directory: infra/envs/dev-base
-        run: terraform apply -auto-approve
-      - name: Terraform Init (dev)
-        if: env.APPLY_ENABLED == 'true'
-        working-directory: infra/envs/dev
-        run: terraform init
-      - name: Terraform Apply (dev)
-        if: env.APPLY_ENABLED == 'true'
-        working-directory: infra/envs/dev
-        env:
-          TF_VAR_rds_master_password: ${{ secrets.RDS_MASTER_PASSWORD }}
-        run: terraform apply -auto-approve
+        uses: ./.github/actions/terraform-dev
+        with:
+          command: apply
+          rds-master-password: ${{ secrets.RDS_MASTER_PASSWORD }}
+          terraform-version: ${{ env.TF_VERSION }}

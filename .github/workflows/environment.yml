@@ -1,0 +1,174 @@
+name: Dev Environment
+
+# One command to bring dev up or down:
+#   npm run infra:dev:up    (gh workflow run environment.yml -f action=up)
+#   npm run infra:dev:down  (gh workflow run environment.yml -f action=down)
+#
+# up:   terraform apply dev-base, then dev
+#       -> database bootstrap (roles, databases, credentials; migrate/seed
+#          whatever images already exist)
+#       -> deploy auth, platform, docpost-api, workers, web
+#       -> seed (dev users and sample teams, idempotent)
+#       -> smoke test (SPA over CloudFront, /auth/login through API Gateway)
+# down: terraform destroy infra/envs/dev only. dev-base (API URL, ECR,
+#       CloudFront, secrets, CI roles) and bootstrap/ (state) are never touched.
+#
+# The first job runs in the GitHub environment "dev": add required reviewers
+# there to approve every up/down, and limit it to the main branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'up = apply + bootstrap + deploy + smoke test; down = destroy infra/envs/dev only'
+        type: choice
+        options: [up, down]
+        required: true
+
+# Same group as infra.yml: never two Terraform runs against dev at once.
+# (Called workflows use other groups; sharing this one would deadlock.)
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: '1.9'
+  ENVIRONMENT: dev
+
+jobs:
+  terraform:
+    name: terraform ${{ inputs.action == 'up' && 'apply' || 'destroy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: dev
+    steps:
+      - name: Require main and the Terraform role
+        env:
+          ROLE_ARN: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Run this workflow from main (got $GITHUB_REF)."
+            exit 1
+          fi
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::AWS_TERRAFORM_ROLE_ARN is not set. See infra/envs/dev-base/github_terraform.tf."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - name: Terraform
+        uses: ./.github/actions/terraform-dev
+        with:
+          command: ${{ inputs.action == 'up' && 'apply' || 'destroy' }}
+          rds-master-password: ${{ secrets.RDS_MASTER_PASSWORD }}
+          terraform-version: ${{ env.TF_VERSION }}
+
+  database:
+    needs: terraform
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/db-bootstrap.yml
+    with:
+      step: all
+    secrets: inherit
+
+  deploy-auth:
+    needs: database
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/deploy-auth.yml
+    secrets: inherit
+
+  deploy-platform:
+    needs: database
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/deploy-platform.yml
+    secrets: inherit
+
+  deploy-docpost-api:
+    needs: database
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/deploy-docpost-api.yml
+    secrets: inherit
+
+  deploy-workers:
+    needs: terraform
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/deploy-workers.yml
+    secrets: inherit
+
+  deploy-web:
+    needs: terraform
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/deploy-web.yml
+    secrets: inherit
+
+  # The first bootstrap cannot migrate or seed services whose images were not
+  # in ECR yet; the deploys have now migrated them. Existing data is kept.
+  seed:
+    needs: [deploy-auth, deploy-platform, deploy-docpost-api]
+    if: inputs.action == 'up'
+    uses: ./.github/workflows/db-bootstrap.yml
+    with:
+      step: seed
+    secrets: inherit
+
+  smoke-test:
+    needs: [seed, deploy-web, deploy-workers]
+    if: inputs.action == 'up'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Smoke test
+        run: |
+          get() { aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/$1" --query Parameter.Value --output text; }
+          WEB="https://$(get cdn_domain_name)"
+          API="$(get api_base)"
+
+          # retry <expected-code> <description> <curl args...>
+          retry() {
+            local expected="$1" what="$2" code=""
+            shift 2
+            for _ in $(seq 1 20); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@" || true)"
+              if [ "$code" = "$expected" ]; then
+                echo "ok: ${what} -> ${code}"
+                return 0
+              fi
+              echo "waiting: ${what} -> ${code:-no response}"
+              sleep 15
+            done
+            echo "::error::${what} returned ${code}, expected ${expected}"
+            return 1
+          }
+
+          # The SPA through CloudFront.
+          retry 200 "GET ${WEB}/" "${WEB}/"
+
+          # API Gateway -> VPC link -> ALB -> auth -> RDS. An unknown user is a
+          # 401 only if auth could query its database (a DB failure is a 500).
+          retry 401 "POST ${API}/auth/login (unknown user)" \
+            -X POST "${API}/auth/login" \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"smoke-test@example.com","password":"not-a-real-password"}'
+
+          {
+            echo "### dev is up"
+            echo ""
+            echo "- Web: ${WEB}"
+            echo "- API: ${API}"
+            echo "- Sign in with a seeded user from \`services/auth/src/db/seed.ts\`"
+          } >> "$GITHUB_STEP_SUMMARY"
