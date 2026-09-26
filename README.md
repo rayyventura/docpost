@@ -291,6 +291,16 @@ GitHub Actions workflows:
 | `infra.yml` | Manual / push | Apply Terraform changes |
 | `db-bootstrap.yml` | Manual | Create dev databases and roles, migrate, seed |
 
+AWS access from GitHub Actions uses OIDC roles defined in `infra/envs/dev-base`. No long-lived keys are stored:
+
+| Repository secret | Role | Trusted for |
+|---|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | `docpost-dev-github-deploy` | Deploy workflows and the database bootstrap |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN` | `docpost-dev-github-terraform-plan` (read-only) | `terraform plan` on pull requests and `main` |
+| `AWS_TERRAFORM_ROLE_ARN` | `docpost-dev-github-terraform` | `terraform apply` in jobs that use the `dev` GitHub environment |
+
+The Terraform roles are created by `infra/envs/dev-base`, so CI cannot create them itself. Apply `dev-base` once by hand, add the two secrets with the ARNs from `terraform output` (or the `/docpost/dev/github_terraform*_role_arn` parameters), and limit the `dev` environment to the `main` branch (Settings, Environments, dev, Deployment branches). The apply role trusts any job in that environment, so this branch rule is what keeps other branches from applying.
+
 ## Domain Model
 
 - **Job**: A batch submission containing uploaded files and their destination mappings.
