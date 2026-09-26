@@ -1,9 +1,15 @@
 # -----------------------------------------------------------------------------
 # Dev Environment — Root Configuration
+#
+# The teardown layer of dev: VPC, NAT, RDS, ALB, ECS, Lambda, SQS, the staging
+# bucket, and the API routes. `terraform destroy` here stops the idle charges.
+# The permanent pieces (ECR, SPA bucket + CloudFront, the HTTP API itself, RDS
+# secrets, the GitHub deploy role) live in infra/envs/dev-base, which must be
+# applied first; this stack reads it through terraform_remote_state below.
 # -----------------------------------------------------------------------------
 
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.7"
 
   # Backend values come from bootstrap output:
   #   cd bootstrap && terraform output
@@ -52,6 +58,24 @@ data "archive_file" "lambda_placeholder" {
 }
 
 # =============================================================================
+# Dev base (permanent layer)
+# =============================================================================
+data "terraform_remote_state" "base" {
+  backend = "s3"
+
+  config = {
+    bucket = "docpost-terraform-state-85db398b"
+    key    = "dev-base/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+locals {
+  base       = data.terraform_remote_state.base.outputs
+  ssm_prefix = "/${var.project_name}/${var.environment}"
+}
+
+# =============================================================================
 # Network
 # =============================================================================
 module "network" {
@@ -64,26 +88,17 @@ module "network" {
 }
 
 # =============================================================================
-# ECR
+# S3 — staging bucket only (the SPA bucket lives in dev-base)
 # =============================================================================
-module "ecr" {
-  source = "../../modules/ecr"
-
-  project_name = var.project_name
-  environment  = var.environment
-}
-
-# =============================================================================
-# S3
-# =============================================================================
-module "s3" {
+module "s3_staging" {
   source = "../../modules/s3"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  staging_bucket_name = "${var.project_name}-${var.environment}-staging"
-  spa_bucket_name     = "${var.project_name}-${var.environment}-spa"
-  cors_allowed_origins = var.spa_cors_origins
+  project_name          = var.project_name
+  environment           = var.environment
+  create_spa_bucket     = false
+  staging_bucket_name   = "${var.project_name}-${var.environment}-staging"
+  staging_force_destroy = true
+  cors_allowed_origins  = var.spa_cors_origins
 }
 
 # =============================================================================
@@ -94,20 +109,20 @@ module "sqs" {
 
   project_name        = var.project_name
   environment         = var.environment
-  staging_bucket_name = module.s3.staging_bucket_name
-  staging_bucket_arn  = module.s3.staging_bucket_arn
+  staging_bucket_name = module.s3_staging.staging_bucket_name
+  staging_bucket_arn  = module.s3_staging.staging_bucket_arn
 }
 
 # =============================================================================
 # RDS
 # =============================================================================
-module "rds" {
+module "rds_instance" {
   source = "../../modules/rds"
 
-  project_name   = var.project_name
-  environment    = var.environment
-  vpc_id         = module.network.vpc_id
-  vpc_cidr_block = module.network.vpc_cidr_block
+  project_name       = var.project_name
+  environment        = var.environment
+  vpc_id             = module.network.vpc_id
+  vpc_cidr_block     = module.network.vpc_cidr_block
   private_subnet_ids = module.network.private_subnet_ids
 
   instance_class          = var.rds_instance_class
@@ -116,6 +131,11 @@ module "rds" {
   skip_final_snapshot     = true
   multi_az                = false
   backup_retention_period = 1
+
+  # The secrets themselves are permanent (dev-base); this stack writes their values.
+  create_secrets      = false
+  master_secret_arn   = local.base.rds_master_secret_arn
+  service_secret_arns = local.base.rds_service_secret_arns
 
   client_security_group_ids = [
     module.ecs_auth.security_group_id,
@@ -174,18 +194,21 @@ module "ecs_auth" {
   vpc_id             = module.network.vpc_id
   private_subnet_ids = module.network.private_subnet_ids
 
-  container_image = "${module.ecr.repository_urls["auth"]}:latest"
+  container_image = "${local.base.ecr_repository_urls["auth"]}:latest"
   container_port  = 3000
   cpu             = var.ecs_cpu
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
 
+  # Images may not be pushed yet right after a spin-up; CI rolls the services.
+  wait_for_steady_state = false
+
   target_group_arn       = module.alb.target_group_arns["auth"]
   alb_security_group_ids = [module.alb.security_group_id]
-  secret_arns            = [module.rds.secret_arns["auth_service"]]
+  secret_arns            = [module.rds_instance.secret_arns["auth_service"]]
 
   secrets = {
-    DATABASE_URL = module.rds.secret_arns["auth_service"]
+    DATABASE_URL = module.rds_instance.secret_arns["auth_service"]
   }
 
   environment_variables = {
@@ -205,20 +228,24 @@ module "ecs_platform" {
   vpc_id             = module.network.vpc_id
   private_subnet_ids = module.network.private_subnet_ids
 
-  container_image = "${module.ecr.repository_urls["platform"]}:latest"
+  container_image = "${local.base.ecr_repository_urls["platform"]}:latest"
   container_port  = 3000
   cpu             = var.ecs_cpu
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
-  create_cluster  = false
-  cluster_arn     = module.ecs_auth.cluster_arn
+
+  create_cluster = false
+  cluster_arn    = module.ecs_auth.cluster_arn
+
+  # Images may not be pushed yet right after a spin-up; CI rolls the services.
+  wait_for_steady_state = false
 
   target_group_arn       = module.alb.target_group_arns["platform"]
   alb_security_group_ids = [module.alb.security_group_id]
-  secret_arns            = [module.rds.secret_arns["platform_service"]]
+  secret_arns            = [module.rds_instance.secret_arns["platform_service"]]
 
   secrets = {
-    DATABASE_URL = module.rds.secret_arns["platform_service"]
+    DATABASE_URL = module.rds_instance.secret_arns["platform_service"]
   }
 
   environment_variables = {
@@ -237,20 +264,24 @@ module "ecs_docpost_api" {
   vpc_id             = module.network.vpc_id
   private_subnet_ids = module.network.private_subnet_ids
 
-  container_image = "${module.ecr.repository_urls["docpost-api"]}:latest"
+  container_image = "${local.base.ecr_repository_urls["docpost-api"]}:latest"
   container_port  = 3000
   cpu             = var.ecs_cpu
   memory          = var.ecs_memory
   desired_count   = var.ecs_desired_count
-  create_cluster  = false
-  cluster_arn     = module.ecs_auth.cluster_arn
+
+  create_cluster = false
+  cluster_arn    = module.ecs_auth.cluster_arn
+
+  # Images may not be pushed yet right after a spin-up; CI rolls the services.
+  wait_for_steady_state = false
 
   target_group_arn       = module.alb.target_group_arns["docpost-api"]
   alb_security_group_ids = [module.alb.security_group_id]
-  secret_arns            = [module.rds.secret_arns["docpost_service"]]
+  secret_arns            = [module.rds_instance.secret_arns["docpost_service"]]
 
   secrets = {
-    DATABASE_URL = module.rds.secret_arns["docpost_service"]
+    DATABASE_URL = module.rds_instance.secret_arns["docpost_service"]
   }
 
   environment_variables = {
@@ -262,14 +293,18 @@ module "ecs_docpost_api" {
 # =============================================================================
 # API Gateway
 # =============================================================================
-module "api_gateway" {
+# The HTTP API and its stage live in dev-base so the URL survives a teardown.
+# This stack owns the VPC link, the ALB integration, and the routes.
+module "api_routes" {
   source = "../../modules/api-gateway"
 
-  project_name               = var.project_name
-  environment                = var.environment
-  private_subnet_ids         = module.network.private_subnet_ids
+  project_name                = var.project_name
+  environment                 = var.environment
+  create_api                  = false
+  api_id                      = local.base.api_id
+  private_subnet_ids          = module.network.private_subnet_ids
   vpc_link_security_group_ids = [module.alb.security_group_id]
-  alb_listener_arn           = module.alb.listener_arn
+  alb_listener_arn            = module.alb.listener_arn
 
   cors_allow_origins = var.spa_cors_origins
 
@@ -290,8 +325,8 @@ module "api_gateway" {
 module "lambda_fanout" {
   source = "../../modules/lambda"
 
-  project_name = var.project_name
-  environment  = var.environment
+  project_name  = var.project_name
+  environment   = var.environment
   function_name = "fanout"
   handler       = "handler.handler"
   memory_size   = 256
@@ -313,7 +348,7 @@ module "lambda_fanout" {
 
   environment_variables = {
     NODE_ENV       = var.environment
-    S3_BUCKET      = module.s3.staging_bucket_name
+    S3_BUCKET      = module.s3_staging.staging_bucket_name
     TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
   }
 }
@@ -321,8 +356,8 @@ module "lambda_fanout" {
 module "lambda_delivery" {
   source = "../../modules/lambda"
 
-  project_name = var.project_name
-  environment  = var.environment
+  project_name  = var.project_name
+  environment   = var.environment
   function_name = "delivery"
   handler       = "handler.handler"
   memory_size   = 256
@@ -343,9 +378,9 @@ module "lambda_delivery" {
   }
 
   environment_variables = {
-    NODE_ENV     = var.environment
-    S3_BUCKET    = module.s3.staging_bucket_name
-    PLATFORM_URL = "http://${module.alb.alb_dns_name}"
+    NODE_ENV       = var.environment
+    S3_BUCKET      = module.s3_staging.staging_bucket_name
+    PLATFORM_URL   = "http://${module.alb.alb_dns_name}"
     AUTH_TOKEN_URL = "http://${module.alb.alb_dns_name}/auth/token"
   }
 }
@@ -353,8 +388,8 @@ module "lambda_delivery" {
 module "lambda_watchdog" {
   source = "../../modules/lambda"
 
-  project_name = var.project_name
-  environment  = var.environment
+  project_name  = var.project_name
+  environment   = var.environment
   function_name = "watchdog"
   handler       = "handler.handler"
   memory_size   = 128
@@ -376,7 +411,7 @@ module "lambda_watchdog" {
 
   environment_variables = {
     NODE_ENV       = var.environment
-    S3_BUCKET      = module.s3.staging_bucket_name
+    S3_BUCKET      = module.s3_staging.staging_bucket_name
     TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
     JOB_QUEUE_URL  = module.sqs.queue_urls["jobs"]
   }
@@ -385,8 +420,8 @@ module "lambda_watchdog" {
 module "lambda_ws_lifecycle" {
   source = "../../modules/lambda"
 
-  project_name = var.project_name
-  environment  = var.environment
+  project_name  = var.project_name
+  environment   = var.environment
   function_name = "ws-lifecycle"
   handler       = "handler.handler"
   memory_size   = 128
@@ -406,141 +441,55 @@ module "lambda_ws_lifecycle" {
 }
 
 # =============================================================================
-# CDN
+# SSM Parameter Store — teardown-layer values CI/CD reads
+# dev-base writes the permanent ones (api_base, ecr/*, spa_bucket_name, ...)
+# under the same prefix. These disappear with a teardown, which is how a
+# workflow can tell that dev is down.
 # =============================================================================
-module "cdn" {
-  source = "../../modules/cdn"
-
-  project_name                    = var.project_name
-  environment                     = var.environment
-  spa_bucket_name                 = module.s3.spa_bucket_name
-  spa_bucket_arn                  = module.s3.spa_bucket_arn
-  spa_bucket_regional_domain_name = module.s3.spa_bucket_regional_domain_name
+resource "aws_ssm_parameter" "ecs_cluster" {
+  name        = "${local.ssm_prefix}/ecs_cluster"
+  description = "ECS cluster running the dev services (ECS_CLUSTER)."
+  type        = "String"
+  value       = element(split("/", module.ecs_auth.cluster_arn), 1)
 }
 
-# =============================================================================
-# GitHub Actions deploy role (OIDC)
-# =============================================================================
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1",
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
-  ]
+resource "aws_ssm_parameter" "ecs_service" {
+  for_each = {
+    auth          = module.ecs_auth.service_name
+    platform      = module.ecs_platform.service_name
+    "docpost-api" = module.ecs_docpost_api.service_name
+  }
+
+  name        = "${local.ssm_prefix}/ecs_service/${each.key}"
+  description = "ECS service name for ${each.key}."
+  type        = "String"
+  value       = each.value
 }
 
-resource "aws_iam_role" "github_deploy" {
-  name = "docpost-dev-github-deploy"
+resource "aws_ssm_parameter" "lambda_function" {
+  for_each = {
+    fanout   = module.lambda_fanout.function_name
+    delivery = module.lambda_delivery.function_name
+    watchdog = module.lambda_watchdog.function_name
+    ws       = module.lambda_ws_lifecycle.function_name
+  }
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.github.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:rayyventura*/docpost*:*"
-        }
-      }
-    }]
-  })
+  name        = "${local.ssm_prefix}/lambda/${each.key}"
+  description = "Lambda function name for the ${each.key} worker."
+  type        = "String"
+  value       = each.value
 }
 
-resource "aws_iam_role_policy" "github_deploy" {
-  name = "docpost-dev-github-deploy"
-  role = aws_iam_role.github_deploy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:CompleteLayerUpload",
-          "ecr:InitiateLayerUpload",
-          "ecr:PutImage",
-          "ecr:UploadLayerPart",
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer"
-        ]
-        Resource = "arn:aws:ecr:${var.region}:*:repository/docpost/*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition",
-          "ecs:DescribeTasks",
-          "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService",
-          "ecs:RunTask",
-          "ecs:ListTasks"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "iam:PassedToService" = "ecs-tasks.amazonaws.com"
-          }
-        }
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:PutSecretValue",
-          "secretsmanager:DescribeSecret"
-        ]
-        Resource = "arn:aws:secretsmanager:${var.region}:*:secret:docpost/*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["rds:DescribeDBInstances"]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = [
-          module.s3.spa_bucket_arn,
-          "${module.s3.spa_bucket_arn}/*"
-        ]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["cloudfront:CreateInvalidation"]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "logs:CreateLogGroup"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
+resource "aws_ssm_parameter" "rds_instance_identifier" {
+  name        = "${local.ssm_prefix}/rds_instance_identifier"
+  description = "Identifier of the dev RDS instance."
+  type        = "String"
+  value       = module.rds_instance.db_instance_identifier
 }
 
-output "github_deploy_role_arn" {
-  value = aws_iam_role.github_deploy.arn
+resource "aws_ssm_parameter" "staging_bucket_name" {
+  name        = "${local.ssm_prefix}/staging_bucket_name"
+  description = "S3 bucket for staged uploads."
+  type        = "String"
+  value       = module.s3_staging.staging_bucket_name
 }

@@ -83,6 +83,30 @@ variable "enable_proxy" {
   default     = true
 }
 
+variable "secret_recovery_window_days" {
+  description = "Days Secrets Manager keeps a deleted secret recoverable. 0 deletes immediately so the same name can be recreated right after a destroy."
+  type        = number
+  default     = 30
+}
+
+variable "create_secrets" {
+  description = "Create the master and per-service Secrets Manager secrets in this module. Set false when another stack owns them and pass master_secret_arn and service_secret_arns instead."
+  type        = bool
+  default     = true
+}
+
+variable "master_secret_arn" {
+  description = "ARN of an existing master-password secret. Required when create_secrets is false."
+  type        = string
+  default     = null
+}
+
+variable "service_secret_arns" {
+  description = "Map of service name (auth_service, platform_service, docpost_service) to an existing secret ARN. Required when create_secrets is false."
+  type        = map(string)
+  default     = {}
+}
+
 variable "client_security_group_ids" {
   description = "Security group IDs for ECS services and Lambda functions that connect via RDS Proxy."
   type        = list(string)
