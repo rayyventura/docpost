@@ -6,6 +6,9 @@ on:
     paths:
       - 'services/docpost-api/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-docpost-api.yml'
       - 'turbo.json'
@@ -14,6 +17,9 @@ on:
     paths:
       - 'services/docpost-api/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-docpost-api.yml'
       - 'turbo.json'
