@@ -1,0 +1,58 @@
+name: Database Bootstrap
+
+# Prepares the dev database: roles, databases and credentials, then
+# migrations and (dev only) seed data. Safe to re-run at any time.
+# See scripts/db-bootstrap.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: 'all = roles + migrate + seed'
+        type: choice
+        options: [all, roles, migrate, seed]
+        default: all
+  workflow_call:
+    inputs:
+      step:
+        description: 'all, roles, migrate or seed'
+        type: string
+        default: all
+
+# Two bootstraps at once could each generate a password for the same role.
+# (Not terraform-dev: callers of this workflow hold that group.)
+concurrency:
+  group: db-bootstrap-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: dev
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require deploy role
+        env:
+          ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::AWS_DEPLOY_ROLE_ARN is not set."
+            exit 1
+          fi
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Bootstrap database
+        env:
+          STEP: ${{ inputs.step || 'all' }}
+        run: bash scripts/db-bootstrap.sh "$STEP"

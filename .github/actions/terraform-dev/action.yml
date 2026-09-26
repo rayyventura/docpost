@@ -1,0 +1,65 @@
+name: Terraform dev
+description: >
+  Apply dev-base then dev, or destroy dev only. Shared by infra.yml and
+  environment.yml. Expects AWS credentials for the Terraform apply role and
+  runs inside the terraform-dev concurrency group of its caller.
+
+inputs:
+  command:
+    description: 'apply (dev-base, then dev) or destroy (dev only; never dev-base or bootstrap/)'
+    required: true
+  rds-master-password:
+    description: RDS master password (repository secret RDS_MASTER_PASSWORD)
+    required: true
+  terraform-version:
+    description: Terraform version
+    required: false
+    default: '1.9'
+
+runs:
+  using: composite
+  steps:
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: false
+
+    # Without the password dev cannot be applied, so dev-base is not applied
+    # either: the two stacks never end up half-migrated.
+    - name: Require RDS master password
+      shell: bash
+      env:
+        RDS_MASTER_PASSWORD: ${{ inputs.rds-master-password }}
+      run: |
+        if [ -z "$RDS_MASTER_PASSWORD" ]; then
+          echo "::error::RDS_MASTER_PASSWORD is not set. Nothing was applied or destroyed."
+          exit 1
+        fi
+
+    - name: Terraform ${{ inputs.command }}
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+        TF_INPUT: 'false'
+        TF_IN_AUTOMATION: 'true'
+        TF_VAR_rds_master_password: ${{ inputs.rds-master-password }}
+      run: |
+        set -euo pipefail
+        case "$COMMAND" in
+          apply)
+            terraform -chdir=infra/envs/dev-base init
+            terraform -chdir=infra/envs/dev-base apply -auto-approve
+            terraform -chdir=infra/envs/dev init
+            terraform -chdir=infra/envs/dev apply -auto-approve
+            ;;
+          destroy)
+            # Only the teardown layer. dev-base keeps the API URL, repositories,
+            # CloudFront, secrets and CI roles; bootstrap/ holds the state.
+            terraform -chdir=infra/envs/dev init
+            terraform -chdir=infra/envs/dev destroy -auto-approve
+            ;;
+          *)
+            echo "::error::command must be apply or destroy, got '$COMMAND'"
+            exit 1
+            ;;
+        esac
