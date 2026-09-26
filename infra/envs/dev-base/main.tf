@@ -164,12 +164,17 @@ resource "aws_iam_role" "github_deploy" {
         Federated = aws_iam_openid_connect_provider.github.arn
       }
       Action = "sts:AssumeRoleWithWebIdentity"
+      # Pushes and manual runs on main (build jobs, database bootstrap), and
+      # jobs in the production (service deploys) and dev (environment.yml)
+      # GitHub environments. Pull requests and other branches get nothing.
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${local.github_repository}:*"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${local.github_repository}:ref:refs/heads/main",
+            "repo:${local.github_repository}:environment:production",
+            "repo:${local.github_repository}:environment:${var.environment}",
+          ]
         }
       }
     }]
@@ -274,6 +279,16 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource = "*"
       },
       {
+        # deploy-workers.yml
+        Effect = "Allow"
+        Action = [
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+          "lambda:UpdateFunctionCode"
+        ]
+        Resource = "arn:aws:lambda:${var.region}:${local.account_id}:function:${local.name_prefix}-*"
+      },
+      {
         Effect = "Allow"
         Action = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = [
@@ -284,7 +299,7 @@ resource "aws_iam_role_policy" "github_deploy" {
       {
         Effect   = "Allow"
         Action   = ["cloudfront:CreateInvalidation"]
-        Resource = "*"
+        Resource = module.cdn.distribution_arn
       },
       {
         Effect = "Allow"
