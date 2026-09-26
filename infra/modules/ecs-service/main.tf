@@ -233,7 +233,7 @@ resource "aws_ecs_service" "service" {
     rollback = true
   }
 
-  wait_for_steady_state = true
+  wait_for_steady_state = var.wait_for_steady_state
 
   # ADR-019: CI/CD updates task definitions directly; Terraform should not
   # revert them on the next apply.

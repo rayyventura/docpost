@@ -213,9 +213,10 @@ Docker Compose starts LocalStack with S3, SQS, and KMS. The init script (`script
 
 ## Deployment
 
-Infrastructure is managed with Terraform under `infra/`. Two environments are configured:
+Infrastructure is managed with Terraform under `infra/`. Two environments are configured, and dev is split into two stacks:
 
-- `infra/envs/dev/`: Development. This is the environment to create and destroy when you want AWS charges to stop.
+- `infra/envs/dev-base/`: The permanent part of dev: ECR repositories, the SPA bucket and CloudFront distribution, the API Gateway HTTP API (its URL), the RDS secrets, the GitHub Actions deploy role, and the Parameter Store values under `/docpost/dev/` that CI reads. It costs close to nothing while idle. Leave it in place.
+- `infra/envs/dev/`: The costly part of dev. This is the environment to create and destroy when you want AWS charges to stop. It reads `dev-base` through remote state, so a rebuild keeps the same API URL, repositories, and CloudFront distribution.
 - `infra/envs/prod/`: Production.
 
 Terraform modules cover: VPC networking, ALB, API Gateway, CloudFront CDN, ECR repositories, ECS Fargate services, RDS PostgreSQL, S3 buckets, SQS queues, and Lambda functions.
@@ -224,7 +225,17 @@ The pieces that keep billing while the app is idle are the NAT gateway, the RDS 
 
 ### Spin the dev environment up
 
-Requires the AWS CLI, Terraform 1.5 or newer, and credentials that can create resources in the account. The remote state backend already exists. `infra/envs/dev/main.tf` points at it.
+Requires the AWS CLI, Terraform 1.7 or newer, and credentials that can create resources in the account. The remote state backend already exists. `infra/envs/dev/main.tf` points at it.
+
+`dev-base` must be applied before `dev`. It normally already is. Apply it once if `terraform plan` in `dev` reports that it cannot read `dev-base` outputs:
+
+```bash
+cd infra/envs/dev-base
+terraform init
+terraform apply
+```
+
+Then bring up the rest:
 
 ```bash
 cd infra/envs/dev
@@ -245,7 +256,7 @@ cd infra/envs/dev
 terraform destroy -var="rds_master_password=$RDS_MASTER_PASSWORD"
 ```
 
-Confirm with `yes` when prompted. This deletes the dev VPC, NAT gateway, RDS instance, load balancer, ECS services, queues, and buckets. Dev is configured to skip a final database snapshot, so the database goes away with the stack.
+Confirm with `yes` when prompted. This deletes the dev VPC, NAT gateway, RDS instance, load balancer, ECS services, Lambda workers, queues, and the staging bucket. Dev is configured to skip a final database snapshot, so the database goes away with the stack. The staging bucket is emptied automatically. Do not destroy `dev-base`: it is what keeps the API URL, image repositories, and deploy role stable between rebuilds.
 
 If destroy stops because an S3 bucket still has objects, empty that bucket and run `terraform destroy` again:
 
