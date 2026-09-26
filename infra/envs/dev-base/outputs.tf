@@ -64,3 +64,13 @@ output "ssm_parameter_prefix" {
   description = "Parameter Store prefix holding the values CI/CD reads."
   value       = local.ssm_prefix
 }
+
+output "github_terraform_role_arn" {
+  description = "IAM role GitHub Actions assumes to apply dev-base and dev (AWS_TERRAFORM_ROLE_ARN)."
+  value       = aws_iam_role.github_terraform.arn
+}
+
+output "github_terraform_plan_role_arn" {
+  description = "Read-only IAM role GitHub Actions assumes to plan dev-base and dev (AWS_TERRAFORM_PLAN_ROLE_ARN)."
+  value       = aws_iam_role.github_terraform_plan.arn
+}

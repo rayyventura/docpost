@@ -225,38 +225,51 @@ The pieces that keep billing while the app is idle are the NAT gateway, the RDS 
 
 ### Spin the dev environment up
 
-Requires the AWS CLI, Terraform 1.7 or newer, and credentials that can create resources in the account. The remote state backend already exists. `infra/envs/dev/main.tf` points at it.
-
-`dev-base` must be applied before `dev`. It normally already is. Apply it once if `terraform plan` in `dev` reports that it cannot read `dev-base` outputs:
+From a clone with the GitHub CLI signed in:
 
 ```bash
-cd infra/envs/dev-base
-terraform init
-terraform apply
+npm run infra:dev:up      # gh workflow run environment.yml --ref main -f action=up
+gh run watch              # follow it
 ```
 
-Then bring up the rest:
+The **Dev Environment** workflow (`environment.yml`) does the following in order. The first job waits for approval if the `dev` GitHub environment has required reviewers:
+
+1. `terraform apply` of `dev-base`, then `dev`
+2. The database bootstrap (below)
+3. All deploy workflows: auth, platform, docpost-api, workers, web
+4. The dev seed
+5. A smoke test: the SPA over CloudFront returns 200, and `POST /auth/login` through API Gateway reaches the auth database
+
+The web URL and API URL are printed in the run summary. CI reads every environment value (cluster, services, repositories, bucket, distribution, API base) from Parameter Store under `/docpost/dev/`, so a rebuild needs no secret or variable changes.
+
+To run Terraform from your machine instead (requires the AWS CLI, Terraform 1.7 or newer, and credentials that can create resources in the account):
 
 ```bash
-cd infra/envs/dev
-export RDS_MASTER_PASSWORD='choose-a-password'
-terraform init
-terraform plan -var="rds_master_password=$RDS_MASTER_PASSWORD"
-terraform apply -var="rds_master_password=$RDS_MASTER_PASSWORD"
+export TF_VAR_rds_master_password='the-master-password'
+npm run infra:dev:up:local     # dev-base, then dev; each apply asks for confirmation
 ```
 
-`plan` prints every resource that will be created. `apply` asks for confirmation, then creates the dev network, database, load balancer, and the rest of the stack. The password is only passed on the command line. Do not commit it.
+Then run the **Database Bootstrap** workflow, and the deploy workflows or a push to `main`. The password is only passed through the environment. Do not commit it.
+
+### Bootstrap the dev database
+
+A new RDS instance is empty. Run the **Database Bootstrap** workflow (`db-bootstrap.yml`, on `main`) after `terraform apply`. It is safe to run again at any time. It calls `scripts/db-bootstrap.sh`, which runs one-off Fargate tasks inside the VPC:
+
+1. `roles`: writes a generated `DATABASE_URL` into each `docpost/dev/rds/<service>` secret that does not hold one for the current instance, then runs the `docpost-dev-db-bootstrap` task. That task creates the `docpost_auth`, `docpost_platform` and `docpost_api` databases and their owner roles to match the secrets.
+2. `migrate`: `scripts/db-migrate.sh` for each service whose image is in ECR. It runs Drizzle migrations, or `drizzle-kit push` in dev while the services have no generated migrations.
+3. `seed` (dev only): the auth seed users, and the platform sample teams while the teams table is empty.
+
+The deploy workflows run the same `roles` step on their own when a service secret is not ready, then migrate that service before rolling it. The seeded sign-in users are listed in `services/auth/src/db/seed.ts`.
 
 ### Tear the dev environment down
 
-From the same directory, with the same password variable set:
-
 ```bash
-cd infra/envs/dev
-terraform destroy -var="rds_master_password=$RDS_MASTER_PASSWORD"
+npm run infra:dev:down    # gh workflow run environment.yml --ref main -f action=down
 ```
 
-Confirm with `yes` when prompted. This deletes the dev VPC, NAT gateway, RDS instance, load balancer, ECS services, Lambda workers, queues, and the staging bucket. Dev is configured to skip a final database snapshot, so the database goes away with the stack. The staging bucket is emptied automatically. Do not destroy `dev-base`: it is what keeps the API URL, image repositories, and deploy role stable between rebuilds.
+This runs `terraform destroy` on `infra/envs/dev` only. It deletes the dev VPC, NAT gateway, RDS instance, load balancer, ECS services, Lambda workers, queues, and the staging bucket. Dev is configured to skip a final database snapshot, so the database goes away with the stack. The staging bucket is emptied automatically. `dev-base` is never destroyed: it keeps the API URL, image repositories, CloudFront, the RDS secrets and the CI roles stable between rebuilds. While dev is down, pushes to `main` still build and push images, and skip the rollout.
+
+Locally, with `TF_VAR_rds_master_password` set: `npm run infra:dev:down:local`. `npm run infra:dev:status` lists what the dev state holds.
 
 If destroy stops because an S3 bucket still has objects, empty that bucket and run `terraform destroy` again:
 
@@ -273,12 +286,27 @@ GitHub Actions workflows:
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `ci.yml` | Pull requests | Lint, typecheck, test |
-| `deploy-auth.yml` | Push to main | Deploy Auth service |
-| `deploy-platform.yml` | Push to main | Deploy Platform service |
-| `deploy-docpost-api.yml` | Push to main | Deploy DocPost API |
-| `deploy-workers.yml` | Push to main | Deploy all workers |
-| `deploy-web.yml` | Push to main | Deploy SPA to CDN |
-| `infra.yml` | Manual / push | Apply Terraform changes |
+| `deploy-auth.yml` | Push to main / manual / called | Deploy Auth service |
+| `deploy-platform.yml` | Push to main / manual / called | Deploy Platform service |
+| `deploy-docpost-api.yml` | Push to main / manual / called | Deploy DocPost API |
+| `deploy-workers.yml` | Push to main / manual / called | Deploy all workers |
+| `deploy-web.yml` | Push to main / manual / called | Deploy SPA to CDN |
+| `infra.yml` | Pull requests (plan) / push to main / manual | Plan and apply Terraform (`dev-base`, then `dev`) |
+| `db-bootstrap.yml` | Manual / called | Create dev databases and roles, migrate, seed |
+| `environment.yml` | Manual (`action: up` or `down`) | Bring all of dev up (apply, bootstrap, deploy, smoke test) or destroy `infra/envs/dev` |
+
+`infra.yml` and `environment.yml` share the `terraform-dev` concurrency group, so only one Terraform run touches dev at a time. The only values stored in GitHub are the role ARNs and `RDS_MASTER_PASSWORD`. The old `SPA_BUCKET_NAME` and `CLOUDFRONT_DISTRIBUTION_ID` secrets and the `VITE_API_BASE` variable are no longer read.
+
+AWS access from GitHub Actions uses OIDC roles defined in `infra/envs/dev-base`. No long-lived keys are stored:
+
+| Repository secret | Role | Trusted for |
+|---|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | `docpost-dev-github-deploy` | Deploy workflows, the database bootstrap and the smoke test (`main`, and the `production` and `dev` environments) |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN` | `docpost-dev-github-terraform-plan` (read-only) | `terraform plan` on pull requests and `main` |
+| `AWS_TERRAFORM_ROLE_ARN` | `docpost-dev-github-terraform` | `terraform apply`/`destroy` in jobs that use the `dev` GitHub environment |
+| `RDS_MASTER_PASSWORD` | (not a role) | Master password Terraform sets on the dev RDS instance |
+
+The Terraform roles are created by `infra/envs/dev-base`, so CI cannot create them itself. Apply `dev-base` once by hand, add the two secrets with the ARNs from `terraform output` (or the `/docpost/dev/github_terraform*_role_arn` parameters), and limit the `dev` environment to the `main` branch (Settings, Environments, dev, Deployment branches). The apply role trusts any job in that environment, so this branch rule is what keeps other branches from applying.
 
 ## Domain Model
 
