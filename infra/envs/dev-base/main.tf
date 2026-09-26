@@ -53,7 +53,10 @@ locals {
   # The cluster lives in infra/envs/dev and is recreated with it; its name is fixed.
   ecs_cluster_arn = "arn:aws:ecs:${var.region}:${local.account_id}:cluster/${local.name_prefix}-cluster"
 
-  github_repository = "rayyventura/docpost"
+  # The repo uses GitHub's immutable OIDC subjects, which carry the owner and
+  # repo IDs: repo:<owner>@<owner_id>/<repo>@<repo_id>:... Check with
+  # gh api repos/rayyventura/docpost/actions/oidc/customization/sub
+  github_repository = "rayyventura@89822434/docpost@1386155203"
 }
 
 # =============================================================================
