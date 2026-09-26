@@ -8,6 +8,16 @@ output "db_instance_address" {
   value       = aws_db_instance.main.address
 }
 
+output "db_instance_port" {
+  description = "Port of the RDS instance."
+  value       = aws_db_instance.main.port
+}
+
+output "master_username" {
+  description = "Master username of the RDS instance."
+  value       = aws_db_instance.main.username
+}
+
 output "db_instance_identifier" {
   description = "Identifier of the RDS instance."
   value       = aws_db_instance.main.identifier

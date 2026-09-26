@@ -43,8 +43,17 @@ provider "aws" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
-  ssm_prefix = "/${var.project_name}/${var.environment}"
+  ssm_prefix  = "/${var.project_name}/${var.environment}"
+  name_prefix = "${var.project_name}-${var.environment}"
+  account_id  = data.aws_caller_identity.current.account_id
+
+  # The cluster lives in infra/envs/dev and is recreated with it; its name is fixed.
+  ecs_cluster_arn = "arn:aws:ecs:${var.region}:${local.account_id}:cluster/${local.name_prefix}-cluster"
+
+  github_repository = "rayyventura/docpost"
 }
 
 # =============================================================================
@@ -160,7 +169,7 @@ resource "aws_iam_role" "github_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:rayyventura*/docpost*:*"
+          "token.actions.githubusercontent.com:sub" = "repo:${local.github_repository}:*"
         }
       }
     }]
@@ -193,22 +202,45 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource = "arn:aws:ecr:${var.region}:*:repository/docpost/*"
       },
       {
+        Effect   = "Allow"
+        Action   = ["ecr:DescribeImages"]
+        Resource = "arn:aws:ecr:${var.region}:*:repository/docpost/*"
+      },
+      {
+        # Read-only, or (RegisterTaskDefinition) without resource-level permissions.
         Effect = "Allow"
         Action = [
-          "ecs:DescribeServices",
           "ecs:DescribeTaskDefinition",
-          "ecs:DescribeTasks",
           "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService",
-          "ecs:RunTask",
+          "ecs:DescribeTasks",
           "ecs:ListTasks"
         ]
         Resource = "*"
       },
       {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:UpdateService"
+        ]
+        Resource = "arn:aws:ecs:${var.region}:${local.account_id}:service/${local.name_prefix}-cluster/*"
+      },
+      {
+        # Deploys run migrations with the service task definitions, and
+        # scripts/db-bootstrap.sh runs the db-bootstrap task definition.
+        Effect   = "Allow"
+        Action   = ["ecs:RunTask"]
+        Resource = "arn:aws:ecs:${var.region}:${local.account_id}:task-definition/${local.name_prefix}-*"
+        Condition = {
+          ArnEquals = {
+            "ecs:cluster" = local.ecs_cluster_arn
+          }
+        }
+      },
+      {
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
-        Resource = "*"
+        Resource = "arn:aws:iam::${local.account_id}:role/${local.name_prefix}-*"
         Condition = {
           StringEquals = {
             "iam:PassedToService" = "ecs-tasks.amazonaws.com"
@@ -216,13 +248,25 @@ resource "aws_iam_role_policy" "github_deploy" {
         }
       },
       {
+        # scripts/db-bootstrap.sh reads the service secrets, writes generated
+        # credentials into them, and the master secret is only ever read by
+        # the bootstrap task itself (through its execution role).
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue",
           "secretsmanager:PutSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = "arn:aws:secretsmanager:${var.region}:*:secret:docpost/*"
+        Resource = [for s in aws_secretsmanager_secret.rds_service_credentials : s.arn]
+      },
+      {
+        # Print the last lines of a failed one-off task.
+        Effect = "Allow"
+        Action = [
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents"
+        ]
+        Resource = "arn:aws:logs:${var.region}:${local.account_id}:log-group:/ecs/${local.name_prefix}/*"
       },
       {
         Effect   = "Allow"

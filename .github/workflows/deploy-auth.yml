@@ -6,6 +6,9 @@ on:
     paths:
       - 'services/auth/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-auth.yml'
       - 'turbo.json'
@@ -14,6 +17,9 @@ on:
     paths:
       - 'services/auth/**'
       - 'scripts/ci-deploy-service.sh'
+      - 'scripts/db-bootstrap.sh'
+      - 'scripts/db-migrate.sh'
+      - 'scripts/lib/**'
       - 'packages/shared/**'
       - '.github/workflows/deploy-auth.yml'
       - 'turbo.json'

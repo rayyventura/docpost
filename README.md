@@ -247,6 +247,16 @@ terraform apply -var="rds_master_password=$RDS_MASTER_PASSWORD"
 
 `plan` prints every resource that will be created. `apply` asks for confirmation, then creates the dev network, database, load balancer, and the rest of the stack. The password is only passed on the command line. Do not commit it.
 
+### Bootstrap the dev database
+
+A new RDS instance is empty. Run the **Database Bootstrap** workflow (`db-bootstrap.yml`, on `main`) after `terraform apply`. It is safe to run again at any time. It calls `scripts/db-bootstrap.sh`, which runs one-off Fargate tasks inside the VPC:
+
+1. `roles`: writes a generated `DATABASE_URL` into each `docpost/dev/rds/<service>` secret that does not hold one for the current instance, then runs the `docpost-dev-db-bootstrap` task. That task creates the `docpost_auth`, `docpost_platform` and `docpost_api` databases and their owner roles to match the secrets.
+2. `migrate`: `scripts/db-migrate.sh` for each service whose image is in ECR. It runs Drizzle migrations, or `drizzle-kit push` in dev while the services have no generated migrations.
+3. `seed` (dev only): the auth seed users, and the platform sample teams while the teams table is empty.
+
+The deploy workflows run the same `roles` step on their own when a service secret is not ready, then migrate that service before rolling it. The seeded sign-in users are listed in `services/auth/src/db/seed.ts`.
+
 ### Tear the dev environment down
 
 From the same directory, with the same password variable set:
@@ -279,6 +289,7 @@ GitHub Actions workflows:
 | `deploy-workers.yml` | Push to main | Deploy all workers |
 | `deploy-web.yml` | Push to main | Deploy SPA to CDN |
 | `infra.yml` | Manual / push | Apply Terraform changes |
+| `db-bootstrap.yml` | Manual | Create dev databases and roles, migrate, seed |
 
 ## Domain Model
 
