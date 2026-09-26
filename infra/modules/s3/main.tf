@@ -1,6 +1,9 @@
 # -----------------------------------------------------------------------------
 # S3 Module — Staging Bucket (SSE-KMS) + SPA Hosting Bucket
 # ADR-003: SSE-KMS with aws/s3 managed key + Bucket Keys
+#
+# create_staging_bucket / create_spa_bucket let two stacks each own one bucket
+# (dev keeps staging in the teardown layer and SPA hosting in dev-base).
 # -----------------------------------------------------------------------------
 
 locals {
@@ -15,7 +18,10 @@ locals {
 # Staging Bucket — uploaded files (transient)
 # =============================================================================
 resource "aws_s3_bucket" "staging" {
-  bucket = var.staging_bucket_name
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket        = var.staging_bucket_name
+  force_destroy = var.staging_force_destroy
 
   tags = merge(local.common_tags, {
     Name    = var.staging_bucket_name
@@ -25,7 +31,9 @@ resource "aws_s3_bucket" "staging" {
 
 # SSE-KMS with aws/s3 managed key + Bucket Keys (ADR-003)
 resource "aws_s3_bucket_server_side_encryption_configuration" "staging" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -37,7 +45,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "staging" {
 
 # Block all public access
 resource "aws_s3_bucket_public_access_block" "staging" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -47,7 +57,9 @@ resource "aws_s3_bucket_public_access_block" "staging" {
 
 # TLS-only bucket policy (deny non-SSL requests)
 resource "aws_s3_bucket_policy" "staging_tls_only" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -58,8 +70,8 @@ resource "aws_s3_bucket_policy" "staging_tls_only" {
         Principal = "*"
         Action    = "s3:*"
         Resource = [
-          aws_s3_bucket.staging.arn,
-          "${aws_s3_bucket.staging.arn}/*"
+          aws_s3_bucket.staging[0].arn,
+          "${aws_s3_bucket.staging[0].arn}/*"
         ]
         Condition = {
           Bool = {
@@ -75,7 +87,9 @@ resource "aws_s3_bucket_policy" "staging_tls_only" {
 
 # Lifecycle rules: delete after 30 days, abort incomplete multipart after 7 days
 resource "aws_s3_bucket_lifecycle_configuration" "staging" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   rule {
     id     = "delete-after-30-days"
@@ -98,7 +112,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "staging" {
 
 # CORS configuration for browser uploads
 resource "aws_s3_bucket_cors_configuration" "staging" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   cors_rule {
     allowed_headers = ["*"]
@@ -111,7 +127,9 @@ resource "aws_s3_bucket_cors_configuration" "staging" {
 
 # Versioning disabled (staging files are transient)
 resource "aws_s3_bucket_versioning" "staging" {
-  bucket = aws_s3_bucket.staging.id
+  count = var.create_staging_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.staging[0].id
 
   versioning_configuration {
     status = "Suspended"
@@ -122,6 +140,8 @@ resource "aws_s3_bucket_versioning" "staging" {
 # SPA Hosting Bucket
 # =============================================================================
 resource "aws_s3_bucket" "spa" {
+  count = var.create_spa_bucket ? 1 : 0
+
   bucket = var.spa_bucket_name
 
   tags = merge(local.common_tags, {
@@ -132,7 +152,9 @@ resource "aws_s3_bucket" "spa" {
 
 # Block public access (CloudFront uses OAC)
 resource "aws_s3_bucket_public_access_block" "spa" {
-  bucket = aws_s3_bucket.spa.id
+  count = var.create_spa_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.spa[0].id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -141,7 +163,9 @@ resource "aws_s3_bucket_public_access_block" "spa" {
 }
 
 resource "aws_s3_bucket_versioning" "spa" {
-  bucket = aws_s3_bucket.spa.id
+  count = var.create_spa_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.spa[0].id
 
   versioning_configuration {
     status = "Enabled"
@@ -149,7 +173,9 @@ resource "aws_s3_bucket_versioning" "spa" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "spa" {
-  bucket = aws_s3_bucket.spa.id
+  count = var.create_spa_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.spa[0].id
 
   rule {
     apply_server_side_encryption_by_default {
