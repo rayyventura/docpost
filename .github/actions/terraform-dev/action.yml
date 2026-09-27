@@ -53,6 +53,19 @@ runs:
             terraform -chdir=infra/envs/dev apply -auto-approve
             ;;
           destroy)
+            # Refresh the permanent stack first so the apply role has any new
+            # IAM it needs to finish a destroy (event source mappings, etc.).
+            terraform -chdir=infra/envs/dev-base init
+            terraform -chdir=infra/envs/dev-base apply -auto-approve
+
+            # Routes that are not in state still hold the ALB integration.
+            API_ID="$(terraform -chdir=infra/envs/dev-base output -raw api_id)"
+            if [ -n "$API_ID" ]; then
+              for RID in $(aws apigatewayv2 get-routes --api-id "$API_ID" --query 'Items[].RouteId' --output text); do
+                aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$RID" || true
+              done
+            fi
+
             # Only the teardown layer. dev-base keeps the API URL, repositories,
             # CloudFront, secrets and CI roles; bootstrap/ holds the state.
             terraform -chdir=infra/envs/dev init

@@ -261,6 +261,8 @@ resource "aws_iam_role_policy" "github_terraform" {
           "kms:DescribeKey",
           "kms:ListAliases",
           "lambda:GetAccountSettings",
+          "lambda:GetEventSourceMapping",
+          "lambda:DeleteEventSourceMapping",
           "lambda:ListEventSourceMappings",
           "lambda:ListFunctions",
           "logs:DescribeLogGroups",
