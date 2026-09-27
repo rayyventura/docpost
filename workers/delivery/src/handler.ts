@@ -117,7 +117,13 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     .returning();
 
   if (claimed) {
-    await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'in_progress' });
+    await pushTaskUpdate({
+      jobId: claimed.jobId,
+      taskId: claimed.id,
+      fileId: claimed.fileId,
+      attemptCount: claimed.attemptCount,
+      status: 'in_progress',
+    });
   }
 
   if (!claimed) {
@@ -194,7 +200,14 @@ export async function processRecord(record: SQSRecord): Promise<void> {
           .where(eq(tasks.id, claimed.id));
 
         console.log(`Task ${taskId} completed, document ${body.documentId}`);
-        await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'completed' });
+        await pushTaskUpdate({
+          jobId: claimed.jobId,
+          taskId: claimed.id,
+          fileId: claimed.fileId,
+          fileName,
+          attemptCount: claimed.attemptCount,
+          status: 'completed',
+        });
         await maybeCompleteJob(db, claimed.jobId);
         return;
       }
@@ -254,6 +267,8 @@ async function failTask(
   await pushTaskUpdate({
     jobId: task.jobId,
     taskId: task.id,
+    fileId: task.fileId,
+    attemptCount: task.attemptCount,
     status: 'failed',
     failureReason: reason,
   });

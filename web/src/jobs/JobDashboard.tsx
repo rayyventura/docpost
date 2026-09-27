@@ -7,6 +7,7 @@ import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail 
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
+import { applyJobCounts, applyTaskUpdate, mergeFetchedTasks } from './taskUpdates';
 import { deliverySocketUrl } from './wsUrl';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
@@ -152,21 +153,6 @@ function jobHasOpenWork(job: JobSummary | null | undefined): boolean {
   return job.counts.pending + job.counts.in_progress > 0;
 }
 
-function applyTaskUpdate(tasks: TaskDetail[], message: { taskId?: string; status?: string; failureReason?: string }): TaskDetail[] {
-  if (!message.taskId || !message.status) return tasks;
-  let matched = false;
-  const next = tasks.map((task) => {
-    if (task.taskId !== message.taskId) return task;
-    matched = true;
-    return {
-      ...task,
-      status: message.status ?? task.status,
-      failureReason: message.failureReason ?? task.failureReason,
-    };
-  });
-  return matched ? next : tasks;
-}
-
 export function JobDashboard() {
   const { id } = useParams<{ id: string }>();
   return <JobDashboardView key={id ?? 'list'} jobId={id} />;
@@ -207,6 +193,10 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     };
   }, [selectedJobId]);
 
+  const liveRef = useRef(false);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
   const loadDetails = useCallback(async (showLoading: boolean): Promise<JobSummary | null> => {
     if (!selectedJobId) return null;
     if (showLoading) setLoading(true);
@@ -220,7 +210,9 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
       ]);
       if (job.jobId !== selectedJobId) return null;
       setSelectedJob(job);
-      setTasks(taskData.tasks);
+      const nextTasks = mergeFetchedTasks(tasksRef.current, taskData.tasks);
+      tasksRef.current = nextTasks;
+      setTasks(nextTasks);
       setTaskTotal(taskData.total);
       return job;
     } catch (err) {
@@ -243,10 +235,12 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     const tick = async (showLoading: boolean) => {
       const job = await loadDetails(showLoading);
       if (cancelled) return;
-      timer = window.setTimeout(
-        () => void tick(false),
-        jobHasOpenWork(job) ? ACTIVE_POLL_MS : IDLE_POLL_MS,
-      );
+      const wait = liveRef.current
+        ? IDLE_POLL_MS
+        : jobHasOpenWork(job)
+          ? ACTIVE_POLL_MS
+          : IDLE_POLL_MS;
+      timer = window.setTimeout(() => void tick(false), wait);
     };
 
     void tick(!seed.job);
@@ -273,7 +267,9 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
 
       socket.onopen = () => {
         attempt = 0;
+        liveRef.current = true;
         socket?.send(JSON.stringify({ action: 'subscribe', jobId: selectedJobId }));
+        void loadDetailsRef.current(false);
       };
 
       socket.onmessage = (event) => {
@@ -281,8 +277,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           type?: string;
           jobId?: string;
           taskId?: string;
+          fileId?: string;
+          fileName?: string;
           status?: string;
           failureReason?: string;
+          attemptCount?: number;
           counts?: JobSummary['counts'];
         };
         if (message.type === 'subscribed') {
@@ -291,12 +290,22 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         }
         if (message.type !== 'task_update' || message.jobId !== selectedJobId) return;
 
-        const before = { matched: false };
-        setTasks((current) => {
-          const next = applyTaskUpdate(current, message);
-          before.matched = next !== current;
-          return next;
-        });
+        const result = applyTaskUpdate(tasksRef.current, message);
+        if (result.matched && message.status) {
+          tasksRef.current = result.tasks;
+          setTasks(result.tasks);
+          setSelectedJob((current) => {
+            if (!current) return current;
+            const counts = applyJobCounts(
+              current.counts,
+              result.previousStatus,
+              message.status,
+              message.counts,
+            );
+            return { ...current, counts, aggregateStatus: aggregateStatus(counts) };
+          });
+          return;
+        }
         if (message.counts) {
           setSelectedJob((current) => current ? {
             ...current,
@@ -304,12 +313,13 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             aggregateStatus: aggregateStatus(message.counts ?? current.counts),
           } : current);
         }
-        if (!before.matched) {
+        if (!result.matched) {
           void loadDetailsRef.current(false);
         }
       };
 
       socket.onclose = () => {
+        liveRef.current = false;
         if (closed) return;
         const delay = Math.min(1000 * 2 ** attempt, 10000);
         attempt += 1;
@@ -320,6 +330,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     connect();
     return () => {
       closed = true;
+      liveRef.current = false;
       window.clearTimeout(timer);
       socket?.close();
     };
@@ -409,46 +420,20 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             </span>
           </div>
           <div className="counts-bar">
-            {visibleJob.counts.completed > 0 && (
+            {([
+              ['completed', visibleJob.counts.completed],
+              ['in-progress', visibleJob.counts.in_progress],
+              ['pending', visibleJob.counts.pending],
+              ['failed', visibleJob.counts.failed],
+            ] as const).map(([key, count]) => (
               <div
-                className="count-segment count-completed"
-                style={{
-                  width: `${(visibleJob.counts.completed / visibleJob.taskCount) * 100}%`,
-                }}
+                key={key}
+                className={`count-segment count-${key}${count === 0 ? ' count-segment--empty' : ''}`}
+                style={{ width: `${(count / visibleJob.taskCount) * 100}%` }}
               >
-                {visibleJob.counts.completed}
+                {count > 0 ? count : null}
               </div>
-            )}
-            {visibleJob.counts.in_progress > 0 && (
-              <div
-                className="count-segment count-in-progress"
-                style={{
-                  width: `${(visibleJob.counts.in_progress / visibleJob.taskCount) * 100}%`,
-                }}
-              >
-                {visibleJob.counts.in_progress}
-              </div>
-            )}
-            {visibleJob.counts.pending > 0 && (
-              <div
-                className="count-segment count-pending"
-                style={{
-                  width: `${(visibleJob.counts.pending / visibleJob.taskCount) * 100}%`,
-                }}
-              >
-                {visibleJob.counts.pending}
-              </div>
-            )}
-            {visibleJob.counts.failed > 0 && (
-              <div
-                className="count-segment count-failed"
-                style={{
-                  width: `${(visibleJob.counts.failed / visibleJob.taskCount) * 100}%`,
-                }}
-              >
-                {visibleJob.counts.failed}
-              </div>
-            )}
+            ))}
           </div>
         </div>
       )}
