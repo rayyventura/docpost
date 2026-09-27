@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiRequest } from '../api/client';
+import { ContentReveal } from '../ContentReveal';
+import { PageLoading } from '../PageLoading';
 import type { Destination } from './types';
 
 interface Team {
@@ -27,30 +29,11 @@ interface FolderNode {
 interface DestinationTreeProps {
   selected: Destination[];
   onChange: (destinations: Destination[]) => void;
+  revealFolderPath?: string[];
 }
 
 function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
   return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
-}
-
-function folderDescendantIds(
-  folderId: string,
-  foldersByParent: Map<string, FolderNode[]>,
-): string[] {
-  const children = foldersByParent.get(`folder:${folderId}`) ?? [];
-  return children.flatMap((child) => [child.id, ...folderDescendantIds(child.id, foldersByParent)]);
-}
-
-function isDescendantOf(
-  parent: Destination,
-  candidate: Destination,
-  foldersByParent: Map<string, FolderNode[]>,
-): boolean {
-  if (parent.teamId !== candidate.teamId || destKey(parent) === destKey(candidate)) return false;
-  if (!parent.binderId) return true;
-  if (parent.binderId !== candidate.binderId || !candidate.folderId) return false;
-  if (!parent.folderId) return true;
-  return folderDescendantIds(parent.folderId, foldersByParent).includes(candidate.folderId);
 }
 
 function Expander({
@@ -80,7 +63,7 @@ function Expander({
   );
 }
 
-export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
+export function DestinationTree({ selected, onChange, revealFolderPath = [] }: DestinationTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
 
@@ -93,6 +76,10 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
   const [emptyNodes, setEmptyNodes] = useState<Set<string>>(new Set());
 
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
+  const bindersByTeamRef = useRef(bindersByTeam);
+  const foldersByParentRef = useRef(foldersByParent);
+  bindersByTeamRef.current = bindersByTeam;
+  foldersByParentRef.current = foldersByParent;
 
   useEffect(() => {
     apiRequest<Team[]>('/destinations/teams')
@@ -261,6 +248,140 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
     [expandedFolders, foldersByParent, markLoading],
   );
 
+  useEffect(() => {
+    if (loadingTeams || selected.length === 0) return;
+
+    const dest = selected[selected.length - 1];
+    if (!dest.binderId) return;
+
+    let cancelled = false;
+
+    const reveal = async () => {
+      const team = teams.find((item) => item.id === dest.teamId) ?? {
+        id: dest.teamId,
+        name: dest.teamName,
+      };
+
+      if (!bindersByTeamRef.current.has(team.id)) {
+        try {
+          const data = await apiRequest<{ id: string; name: string }[]>(
+            `/destinations/teams/${team.id}/binders`,
+          );
+          if (cancelled) return;
+          setBindersByTeam((prev) => {
+            const next = new Map(prev);
+            next.set(
+              team.id,
+              data.map((binder) => ({
+                id: binder.id,
+                name: binder.name,
+                teamId: team.id,
+                teamName: team.name,
+              })),
+            );
+            return next;
+          });
+        } catch (err) {
+          console.error(err);
+          return;
+        }
+      }
+      if (cancelled) return;
+      setExpandedTeams((prev) => new Set(prev).add(team.id));
+
+      const binder: Binder = {
+        id: dest.binderId,
+        name: dest.binderName,
+        teamId: dest.teamId,
+        teamName: dest.teamName,
+      };
+      const binderKey = `binder:${binder.id}`;
+      let binderFolders = foldersByParentRef.current.get(binderKey);
+      if (!binderFolders) {
+        try {
+          const data = await apiRequest<{ folders: { id: string; name: string }[] }>(
+            `/destinations/binders/${binder.id}/contents`,
+          );
+          if (cancelled) return;
+          binderFolders = (data.folders ?? []).map((folder) => ({
+            id: folder.id,
+            name: folder.name,
+            binderId: binder.id,
+            binderName: binder.name,
+            teamId: binder.teamId,
+            teamName: binder.teamName,
+            parentId: null,
+          }));
+          setFoldersByParent((prev) => {
+            const next = new Map(prev);
+            next.set(binderKey, binderFolders ?? []);
+            return next;
+          });
+          if (binderFolders.length === 0) {
+            setEmptyNodes((prev) => new Set(prev).add(binderKey));
+          }
+        } catch (err) {
+          console.error(err);
+          return;
+        }
+      }
+      if (cancelled) return;
+      if (binderFolders.length > 0) {
+        setExpandedBinders((prev) => new Set(prev).add(binder.id));
+      }
+
+      const foldersToOpen = dest.folderId
+        ? revealFolderPath.filter((folderId) => folderId !== dest.folderId)
+        : [];
+
+      let siblings = binderFolders;
+      for (const folderId of foldersToOpen) {
+        const folder = siblings.find((item) => item.id === folderId);
+        if (!folder) break;
+
+        const childKey = `folder:${folder.id}`;
+        let children = foldersByParentRef.current.get(childKey);
+        if (!children) {
+          try {
+            const data = await apiRequest<{ folders: { id: string; name: string }[] }>(
+              `/destinations/folders/${folder.id}/contents`,
+            );
+            if (cancelled) return;
+            children = (data.folders ?? []).map((item) => ({
+              id: item.id,
+              name: item.name,
+              binderId: folder.binderId,
+              binderName: folder.binderName,
+              teamId: folder.teamId,
+              teamName: folder.teamName,
+              parentId: folder.id,
+            }));
+            setFoldersByParent((prev) => {
+              const next = new Map(prev);
+              next.set(childKey, children ?? []);
+              return next;
+            });
+            if (children.length === 0) {
+              setEmptyNodes((prev) => new Set(prev).add(childKey));
+            }
+          } catch (err) {
+            console.error(err);
+            break;
+          }
+        }
+        if (children.length > 0) {
+          setExpandedFolders((prev) => new Set(prev).add(folder.id));
+        }
+        siblings = children;
+      }
+    };
+
+    void reveal();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadingTeams, selected, revealFolderPath, teams]);
+
   const isSelected = useCallback(
     (d: { teamId: string; binderId?: string | null; folderId?: string | null }): boolean =>
       selected.some((s) => destKey(s) === destKey(d)),
@@ -277,12 +398,9 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
         return;
       }
 
-      onChange([
-        ...selected.filter((s) => !isDescendantOf(dest, s, foldersByParent)),
-        dest,
-      ]);
+      onChange([...selected, dest]);
     },
-    [selected, onChange, foldersByParent],
+    [selected, onChange],
   );
 
   function renderFolders(parentKey: string, depth: number) {
@@ -333,7 +451,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
     return (
       <div className="dest-tree">
         <div className="tree-panel-header">Destinations</div>
-        <div className="tree-loading">Loading teams...</div>
+        <PageLoading label="Loading destinations" />
       </div>
     );
   }
@@ -355,7 +473,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
           <span className="tree-badge">{selected.length}</span>
         )}
       </div>
-      <div className="tree-scroll">
+      <ContentReveal className="tree-scroll">
         {teams.map((team) => {
           const isExpanded = expandedTeams.has(team.id);
           const isLoading = loadingSet.has(`team:${team.id}`);
@@ -430,7 +548,7 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
             </div>
           );
         })}
-      </div>
+      </ContentReveal>
     </div>
   );
 }

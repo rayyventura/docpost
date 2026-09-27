@@ -25,6 +25,37 @@ function failureReason(code: string, values: Record<string, string>): string {
   return `${code} ${JSON.stringify(values)}`;
 }
 
+function maxAttempts(): number {
+  return Number(env('MAX_RECEIVE_COUNT', '3'));
+}
+
+function receiveCount(record: SQSRecord): number {
+  return Number(record.attributes?.ApproximateReceiveCount ?? 0);
+}
+
+function isLastAttempt(record: SQSRecord, attemptCount: number): boolean {
+  const limit = maxAttempts();
+  return receiveCount(record) >= limit || attemptCount >= limit;
+}
+
+function lastErrorReason(err: unknown): string {
+  const name = err && typeof err === 'object' ? String((err as { name?: string }).name ?? '') : '';
+  if (name === 'AbortError' || name === 'TimeoutError') {
+    return 'the request timed out';
+  }
+
+  const message = err instanceof Error ? err.message : String(err);
+  if (/heap|out of memory|ENOMEM|JavaScript heap/i.test(message)) {
+    return 'the file is too large to deliver';
+  }
+  if (/Platform returned \d+/.test(message)) {
+    return 'the destination service rejected the delivery';
+  }
+
+  const trimmed = message.replace(/[{}]/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return trimmed || 'an unexpected error occurred';
+}
+
 // ---------- Service token cache ----------
 
 let cachedToken: string | null = null;
@@ -94,107 +125,117 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     return;
   }
 
-  // Load the file record
-  const [file] = await db
-    .select()
-    .from(files)
-    .where(eq(files.id, claimed.fileId));
-
-  if (!file) {
-    await failTask(db, claimed, `File record ${claimed.fileId} not found`);
-    return;
-  }
-
-  // HEAD S3 to verify object exists
-  try {
-    await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
-  } catch {
-    await failTask(
-      db,
-      claimed,
-      failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
-    );
-    return;
-  }
-
-  // Get the file from S3
-  const getResult = await getS3().send(new GetObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
-  const fileBuffer = await getResult.Body!.transformToByteArray();
-
-  // Get service JWT
-  const token = await getServiceToken();
-
-  // Build multipart form for platform POST /documents
-  const metadata = JSON.stringify({
-    taskId: claimed.id,
-    binderId: claimed.binderId,
-    folderId: claimed.folderId ?? undefined,
-    name: file.originalName,
-    contentType: file.contentType,
-    checksumSha256: file.checksumSha256,
-    onBehalfOf: file.ownerUserId,
-  });
-
-  const formData = new FormData();
-  formData.append('metadata', metadata);
-  const blob = new Blob([Buffer.from(fileBuffer)], { type: file.contentType });
-  formData.append('file', blob, file.originalName);
-
-  // Deliver to platform
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  let fileName = 'File';
 
   try {
-    const res = await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-      signal: controller.signal,
+    const [file] = await db
+      .select()
+      .from(files)
+      .where(eq(files.id, claimed.fileId));
+
+    if (!file) {
+      await failTask(db, claimed, `File record ${claimed.fileId} not found`);
+      return;
+    }
+
+    fileName = file.originalName;
+
+    try {
+      await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
+    } catch {
+      await failTask(
+        db,
+        claimed,
+        failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
+      );
+      return;
+    }
+
+    const getResult = await getS3().send(new GetObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
+    const fileBuffer = await getResult.Body!.transformToByteArray();
+
+    const token = await getServiceToken();
+
+    const metadata = JSON.stringify({
+      taskId: claimed.id,
+      binderId: claimed.binderId,
+      folderId: claimed.folderId ?? undefined,
+      name: file.originalName,
+      contentType: file.contentType,
+      checksumSha256: file.checksumSha256,
+      onBehalfOf: file.ownerUserId,
     });
 
-    clearTimeout(timer);
+    const formData = new FormData();
+    formData.append('metadata', metadata);
+    const blob = new Blob([Buffer.from(fileBuffer)], { type: file.contentType });
+    formData.append('file', blob, file.originalName);
 
-    if (res.status === 201 || res.status === 200) {
-      const body = (await res.json()) as { documentId: string };
-      await db
-        .update(tasks)
-        .set({
-          status: 'completed',
-          platformDocumentId: body.documentId,
-          updatedAt: new Date(),
-        })
-        .where(eq(tasks.id, claimed.id));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
 
-      console.log(`Task ${taskId} completed, document ${body.documentId}`);
-      await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'completed' });
-      await maybeCompleteJob(db, claimed.jobId);
-      return;
+    try {
+      const res = await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (res.status === 201 || res.status === 200) {
+        const body = (await res.json()) as { documentId: string };
+        await db
+          .update(tasks)
+          .set({
+            status: 'completed',
+            platformDocumentId: body.documentId,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, claimed.id));
+
+        console.log(`Task ${taskId} completed, document ${body.documentId}`);
+        await pushTaskUpdate({ jobId: claimed.jobId, taskId: claimed.id, status: 'completed' });
+        await maybeCompleteJob(db, claimed.jobId);
+        return;
+      }
+
+      if (res.status === 403) {
+        await failTask(
+          db,
+          claimed,
+          failureReason('NOT_AUTHORIZED_AT_DELIVERY', { fileName: file.originalName }),
+        );
+        return;
+      }
+
+      if (res.status === 422) {
+        await failTask(
+          db,
+          claimed,
+          failureReason('CHECKSUM_MISMATCH', { fileName: file.originalName }),
+        );
+        return;
+      }
+
+      const errorBody = await res.text().catch(() => '');
+      throw new Error(`Platform returned ${res.status}: ${errorBody}`);
+    } finally {
+      clearTimeout(timer);
     }
-
-    if (res.status === 403) {
-      await failTask(
-        db,
-        claimed,
-        failureReason('NOT_AUTHORIZED_AT_DELIVERY', { fileName: file.originalName }),
-      );
-      return;
-    }
-
-    if (res.status === 422) {
-      await failTask(
-        db,
-        claimed,
-        failureReason('CHECKSUM_MISMATCH', { fileName: file.originalName }),
-      );
-      return;
-    }
-
-    // 5xx or other — transient failure, throw to let SQS retry
-    const errorBody = await res.text().catch(() => '');
-    throw new Error(`Platform returned ${res.status}: ${errorBody}`);
   } catch (err) {
-    clearTimeout(timer);
-    // Re-throw for SQS retry (visibility timeout)
+    if (isLastAttempt(record, claimed.attemptCount)) {
+      await failTask(
+        db,
+        claimed,
+        failureReason('RETRIES_EXHAUSTED', {
+          fileName,
+          attemptCount: String(claimed.attemptCount),
+          reason: lastErrorReason(err),
+        }),
+      );
+      return;
+    }
+
     throw err;
   }
 }

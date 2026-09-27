@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
+import { ContentReveal } from '../ContentReveal';
+import { PageLoading } from '../PageLoading';
+import { BinderIcon } from './BinderIcon';
 
 interface Binder {
   id: string;
@@ -20,6 +23,8 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
     let cancelled = false;
 
     async function fetchBinders() {
+      setLoading(true);
+      setError('');
       try {
         const data = await apiRequest<Binder[]>(`/destinations/teams/${teamId}/binders`);
         if (!cancelled) {
@@ -41,7 +46,7 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
   }, [teamId]);
 
   if (loading) {
-    return <div className="loading-spinner" aria-label="Loading binders" />;
+    return <PageLoading label="Loading binders" />;
   }
 
   if (error) {
@@ -49,10 +54,15 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
   }
 
   if (binders.length === 0) {
-    return <p className="empty-state">This team has no binders yet.</p>;
+    return (
+      <ContentReveal>
+        <p className="empty-state">This team has no binders yet.</p>
+      </ContentReveal>
+    );
   }
 
   return (
+    <ContentReveal>
     <ul className="item-list">
       {binders.map((binder) => (
         <li key={binder.id}>
@@ -60,7 +70,9 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
             className="item-card"
             onClick={() => onSelect(binder.id, binder.name)}
           >
-            <span className="item-icon" aria-hidden="true">&#x1F4DA;</span>
+            <span className="item-icon item-icon--binder" aria-hidden="true">
+              <BinderIcon />
+            </span>
             <div className="item-info">
               <span className="item-name">{binder.name}</span>
             </div>
@@ -68,5 +80,6 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
         </li>
       ))}
     </ul>
+    </ContentReveal>
   );
 }

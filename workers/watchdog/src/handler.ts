@@ -1,7 +1,7 @@
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, gte, lt } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
 
@@ -119,6 +119,8 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     }
   }
 
+  await failExhaustedTasks(db, jobId, now);
+
   // Check if job is now complete
   await db.execute(sql`
     UPDATE jobs SET completed_at = now()
@@ -161,6 +163,61 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       }),
     );
     console.log(`Watchdog re-armed for job ${jobId} in 60s`);
+  }
+}
+
+function maxAttempts(): number {
+  return Number(env('MAX_RECEIVE_COUNT', '3'));
+}
+
+function staleAfterMs(): number {
+  return Number(env('IN_PROGRESS_STALE_MS', '90000'));
+}
+
+async function failExhaustedTasks(
+  db: Awaited<ReturnType<typeof getDb>>,
+  jobId: string,
+  now: Date,
+): Promise<void> {
+  const staleBefore = new Date(now.getTime() - staleAfterMs());
+
+  const stuck = await db
+    .select({
+      id: tasks.id,
+      attemptCount: tasks.attemptCount,
+      fileName: files.originalName,
+    })
+    .from(tasks)
+    .innerJoin(files, eq(files.id, tasks.fileId))
+    .where(
+      and(
+        eq(tasks.jobId, jobId),
+        eq(tasks.status, 'in_progress'),
+        gte(tasks.attemptCount, maxAttempts()),
+        lt(tasks.updatedAt, staleBefore),
+      ),
+    );
+
+  for (const task of stuck) {
+    const reason = `RETRIES_EXHAUSTED ${JSON.stringify({
+      fileName: task.fileName,
+      attemptCount: String(task.attemptCount),
+      reason: 'the delivery worker stopped after the maximum number of retries',
+    })}`;
+
+    const [failed] = await db
+      .update(tasks)
+      .set({
+        status: 'failed',
+        failureReason: reason,
+        updatedAt: now,
+      })
+      .where(and(eq(tasks.id, task.id), eq(tasks.status, 'in_progress')))
+      .returning({ id: tasks.id });
+
+    if (failed) {
+      console.log(`Watchdog failed task ${task.id} after ${task.attemptCount} attempts`);
+    }
   }
 }
 

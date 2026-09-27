@@ -7,6 +7,11 @@ export interface Destination {
   folderName?: string;
 }
 
+export interface SendLocationState {
+  destination: Destination;
+  folderPath?: string[];
+}
+
 export interface SelectedFile {
   id: string; // client-side UUID before server assigns one
   file: File;

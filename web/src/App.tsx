@@ -5,6 +5,8 @@ import { RegisterPage } from './auth/RegisterPage';
 import { ForgotPasswordPage } from './auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './auth/ResetPasswordPage';
 import { DistributePage } from './jobs/DistributePage';
+import { DestinationsPage } from './destinations/DestinationsPage';
+import { JobDashboard } from './jobs/JobDashboard';
 import { Layout } from './layout/Layout';
 import type { ReactNode } from 'react';
 
@@ -62,10 +64,12 @@ export function App() {
           />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route element={<ProtectedLayout />}>
-            <Route path="/" element={<DistributePage />} />
-            <Route path="/send" element={<DistributePage />} />
-            <Route path="/deliveries" element={<DistributePage />} />
-            <Route path="/deliveries/:jobId" element={<DistributePage />} />
+            <Route path="/" element={<DistributePage />}>
+              <Route index element={<DestinationsPage />} />
+              <Route path="send" element={null} />
+              <Route path="deliveries" element={<JobDashboard />} />
+              <Route path="deliveries/:id" element={<JobDashboard />} />
+            </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

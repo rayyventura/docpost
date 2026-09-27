@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
+import { ContentReveal } from '../ContentReveal';
+import { PageLoading } from '../PageLoading';
 
 interface Team {
   id: string;
@@ -40,7 +42,7 @@ export function TeamList({ onSelect }: TeamListProps) {
   }, []);
 
   if (loading) {
-    return <div className="loading-spinner" aria-label="Loading teams" />;
+    return <PageLoading label="Loading teams" />;
   }
 
   if (error) {
@@ -48,10 +50,15 @@ export function TeamList({ onSelect }: TeamListProps) {
   }
 
   if (teams.length === 0) {
-    return <p className="empty-state">You are not on a team yet, so there is nowhere to file documents.</p>;
+    return (
+      <ContentReveal>
+        <p className="empty-state">You are not on a team yet, so there is nowhere to file documents.</p>
+      </ContentReveal>
+    );
   }
 
   return (
+    <ContentReveal>
     <ul className="item-list">
       {teams.map((team) => (
         <li key={team.id}>
@@ -67,5 +74,6 @@ export function TeamList({ onSelect }: TeamListProps) {
         </li>
       ))}
     </ul>
+    </ContentReveal>
   );
 }
