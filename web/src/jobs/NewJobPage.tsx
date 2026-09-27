@@ -174,7 +174,11 @@ export function NewJobPage() {
 
   return (
     <div className="new-job-page">
-      <p className="page-lead">Choose where each file should be placed in the destination hierarchy. After send, it lives there.</p>
+      <p className="page-lead">
+        Choose where each document should be placed in the destination hierarchy.
+        <br />
+        Authorized users will be able to download it from Documents.
+      </p>
       <div className="distribute-panels">
         <div className={`panel-left ${submitting ? 'panel-left--locked' : ''}`}>
           <DestinationTree

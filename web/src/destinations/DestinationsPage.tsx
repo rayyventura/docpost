@@ -148,7 +148,7 @@ export function DestinationsPage() {
 
   return (
     <div className="destinations-page">
-      <p className="page-lead page-lead--single">Sent documents are stored in this destination hierarchy. Open a team, then a binder or folder, to find one.</p>
+      <p className="page-lead page-lead--single">Authorized users can download documents from this destination hierarchy. Open a team, then a binder or folder, to find one.</p>
       <div className="destinations-toolbar">
         <nav className="breadcrumb" aria-label="Navigation">
           {breadcrumb.map((item, index) => {
@@ -172,7 +172,7 @@ export function DestinationsPage() {
         </nav>
         {sendTarget && (
           <button type="button" className="btn btn-primary" onClick={sendFilesHere}>
-            Send files here
+            Send documents here
           </button>
         )}
       </div>
