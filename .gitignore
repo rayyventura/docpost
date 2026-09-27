@@ -33,8 +33,8 @@ npm-debug.log*
 # Local uploaded files
 services/platform/uploads/
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code local files
+.claude/
 
 # Local RDS master password for Terraform
 infra/envs/dev/.rds-password
