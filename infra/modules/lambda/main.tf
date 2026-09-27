@@ -96,7 +96,7 @@ resource "aws_iam_role_policy" "sqs" {
 
 # Additional configurable policy attachments
 resource "aws_iam_role_policy_attachment" "additional" {
-  for_each = toset(var.policy_arns)
+  for_each = { for idx, arn in var.policy_arns : idx => arn }
 
   role       = aws_iam_role.execution.name
   policy_arn = each.value
