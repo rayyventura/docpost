@@ -1,15 +1,23 @@
 import { useState, useCallback } from 'react';
 import { apiRequest } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import { FilePicker } from './FilePicker';
 import { DestinationTree } from './DestinationTree';
 import { uploadFiles } from './uploadQueue';
-import type { SelectedFile, Destination, JobSubmitResponse } from './types';
+import type { SelectedFile, Destination, DeliveryLocationState, JobSubmitResponse } from './types';
 
 interface NewJobPageProps {
-  onJobCreated: (jobId: string) => void;
+  onJobCreated: (created: DeliveryLocationState) => void;
+}
+
+function destinationLabel(destination: Destination): string {
+  return [destination.teamName, destination.binderName, destination.folderName]
+    .filter(Boolean)
+    .join(' / ');
 }
 
 export function NewJobPage({ onJobCreated }: NewJobPageProps) {
+  const { user } = useAuth();
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -116,12 +124,26 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       setError(null);
       setSubmitting(false);
       setFormKey((key) => key + 1);
-      onJobCreated(response.jobId);
+      onJobCreated({
+        jobId: response.jobId,
+        taskCount: response.taskCount,
+        createdAt: new Date().toISOString(),
+        submitterName: user?.name ?? '',
+        tasks: readyFiles.flatMap((file) =>
+          destinations.map((destination) => ({
+            fileName: file.file.name,
+            teamId: destination.teamId,
+            binderId: destination.binderId ?? '',
+            folderId: destination.folderId ?? null,
+            destination: destinationLabel(destination),
+          })),
+        ),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed');
       setSubmitting(false);
     }
-  }, [readyFiles, destinations, files, onJobCreated]);
+  }, [readyFiles, destinations, files, onJobCreated, user?.name]);
 
   return (
     <div className="new-job-page">

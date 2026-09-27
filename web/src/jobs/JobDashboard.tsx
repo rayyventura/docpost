@@ -1,13 +1,57 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
-import type { JobSummary, TaskDetail } from './types';
+import type { DeliveryLocationState, JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 
 interface JobDashboardProps {
-  jobId?: string;
   onOpenFiles?: () => void;
+}
+
+function deliverySeed(state: unknown, jobId: string | undefined): {
+  job: JobSummary | null;
+  tasks: TaskDetail[];
+} {
+  if (!jobId || !state || typeof state !== 'object') {
+    return { job: null, tasks: [] };
+  }
+
+  const seed = state as Partial<DeliveryLocationState>;
+  if (seed.jobId !== jobId) {
+    return { job: null, tasks: [] };
+  }
+
+  const taskCount = seed.taskCount ?? seed.tasks?.length ?? 0;
+  return {
+    job: {
+      jobId: seed.jobId,
+      createdAt: seed.createdAt ?? new Date().toISOString(),
+      taskCount,
+      completedAt: null,
+      submitterName: seed.submitterName ?? '',
+      counts: {
+        pending: taskCount,
+        in_progress: 0,
+        completed: 0,
+        failed: 0,
+      },
+      aggregateStatus: 'pending',
+    },
+    tasks: (seed.tasks ?? []).map((task, index) => ({
+      taskId: `pending-${jobId}-${index}`,
+      fileId: '',
+      fileName: task.fileName,
+      teamId: task.teamId,
+      binderId: task.binderId,
+      folderId: task.folderId,
+      destination: task.destination,
+      status: 'pending',
+      attemptCount: 0,
+      failureReason: null,
+      platformDocumentId: null,
+    })),
+  };
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -38,24 +82,19 @@ function aggregateStatus(counts: JobSummary['counts']): string {
   return 'in_progress';
 }
 
-export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
+export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const location = useLocation();
+  const { jobId } = useParams<{ jobId: string }>();
   const selectedJobId = jobId ?? null;
-  const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null);
-  const [tasks, setTasks] = useState<TaskDetail[]>([]);
-  const [taskTotal, setTaskTotal] = useState(0);
+  const seed = deliverySeed(location.state, selectedJobId ?? undefined);
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [selectedJob, setSelectedJob] = useState<JobSummary | null>(seed.job);
+  const [tasks, setTasks] = useState<TaskDetail[]>(seed.tasks);
+  const [taskTotal, setTaskTotal] = useState(seed.tasks.length);
   const [taskPage, setTaskPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    setSelectedJob(null);
-    setTasks([]);
-    setTaskTotal(0);
-    setTaskPage(1);
-    setStatusFilter('');
-  }, [jobId]);
+  const [loading, setLoading] = useState(!seed.job && !!selectedJobId);
 
   // Load job list
   useEffect(() => {
@@ -72,6 +111,7 @@ export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
       setLoading(true);
       try {
         const job = await apiRequest<JobSummary>(`/jobs/${selectedJobId}`);
+        if (job.jobId !== selectedJobId) return;
         setSelectedJob(job);
 
         const filterParam = statusFilter ? `&status=${statusFilter}` : '';
@@ -163,6 +203,9 @@ export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
     void navigate(`/deliveries/${id}`);
   }, [navigate]);
 
+  const visibleJob = selectedJob?.jobId === selectedJobId ? selectedJob : null;
+  const visibleTasks = visibleJob ? tasks : [];
+
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
@@ -208,56 +251,56 @@ export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
       </div>
       <p className="page-lead">This is the record of the send. When a file is finished, download it from Files in the destination shown below.</p>
 
-      {selectedJob && (
+      {visibleJob && (
         <div className="job-summary">
           <div className="summary-row">
-            <span className={statusClass(selectedJob.aggregateStatus)}>
-              {statusLabel(selectedJob.aggregateStatus)}
+            <span className={statusClass(visibleJob.aggregateStatus)}>
+              {statusLabel(visibleJob.aggregateStatus)}
             </span>
-            <span>{selectedJob.taskCount} total items</span>
+            <span>{visibleJob.taskCount} total items</span>
             <span className="job-item-meta">
-              {uploadedByLine(selectedJob.submitterName, selectedJob.createdAt)}
+              {uploadedByLine(visibleJob.submitterName, visibleJob.createdAt)}
             </span>
           </div>
           <div className="counts-bar">
-            {selectedJob.counts.completed > 0 && (
+            {visibleJob.counts.completed > 0 && (
               <div
                 className="count-segment count-completed"
                 style={{
-                  width: `${(selectedJob.counts.completed / selectedJob.taskCount) * 100}%`,
+                  width: `${(visibleJob.counts.completed / visibleJob.taskCount) * 100}%`,
                 }}
               >
-                {selectedJob.counts.completed}
+                {visibleJob.counts.completed}
               </div>
             )}
-            {selectedJob.counts.in_progress > 0 && (
+            {visibleJob.counts.in_progress > 0 && (
               <div
                 className="count-segment count-in-progress"
                 style={{
-                  width: `${(selectedJob.counts.in_progress / selectedJob.taskCount) * 100}%`,
+                  width: `${(visibleJob.counts.in_progress / visibleJob.taskCount) * 100}%`,
                 }}
               >
-                {selectedJob.counts.in_progress}
+                {visibleJob.counts.in_progress}
               </div>
             )}
-            {selectedJob.counts.pending > 0 && (
+            {visibleJob.counts.pending > 0 && (
               <div
                 className="count-segment count-pending"
                 style={{
-                  width: `${(selectedJob.counts.pending / selectedJob.taskCount) * 100}%`,
+                  width: `${(visibleJob.counts.pending / visibleJob.taskCount) * 100}%`,
                 }}
               >
-                {selectedJob.counts.pending}
+                {visibleJob.counts.pending}
               </div>
             )}
-            {selectedJob.counts.failed > 0 && (
+            {visibleJob.counts.failed > 0 && (
               <div
                 className="count-segment count-failed"
                 style={{
-                  width: `${(selectedJob.counts.failed / selectedJob.taskCount) * 100}%`,
+                  width: `${(visibleJob.counts.failed / visibleJob.taskCount) * 100}%`,
                 }}
               >
-                {selectedJob.counts.failed}
+                {visibleJob.counts.failed}
               </div>
             )}
           </div>
@@ -280,7 +323,7 @@ export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
         </select>
       </div>
 
-      {loading && tasks.length === 0 ? (
+      {loading && visibleTasks.length === 0 ? (
         <p className="loading">Loading...</p>
       ) : (
         <table className="task-table">
@@ -294,7 +337,7 @@ export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
             </tr>
           </thead>
           <tbody>
-            {tasks.map((t) => (
+            {visibleTasks.map((t) => (
               <tr key={t.taskId} className={`task-row task-${t.status}`}>
                 <td>{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">{t.destination ?? '—'}</td>

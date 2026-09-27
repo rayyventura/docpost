@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { NewJobPage } from './NewJobPage';
 import { JobDashboard } from './JobDashboard';
 import { DestinationsPage } from '../destinations/DestinationsPage';
+import type { DeliveryLocationState } from './types';
 
 function tabClass(isActive: boolean): string {
   return `page-tab ${isActive ? 'page-tab--active' : ''}`;
@@ -19,8 +20,8 @@ export function DistributePage() {
       ? 'new'
       : 'files';
 
-  const handleJobCreated = useCallback((createdJobId: string) => {
-    void navigate(`/deliveries/${createdJobId}`);
+  const handleJobCreated = useCallback((created: DeliveryLocationState) => {
+    void navigate(`/deliveries/${created.jobId}`, { state: created });
   }, [navigate]);
 
   return (
@@ -43,9 +44,11 @@ export function DistributePage() {
       <div className={`tab-panel ${activeTab === 'files' ? 'tab-panel--active' : ''}`}>
         <DestinationsPage />
       </div>
-      <div className={`tab-panel ${activeTab === 'deliveries' ? 'tab-panel--active' : ''}`}>
-        <JobDashboard jobId={jobId} onOpenFiles={() => void navigate('/')} />
-      </div>
+      {activeTab === 'deliveries' && (
+        <div className="tab-panel tab-panel--active">
+          <JobDashboard key={jobId ?? 'list'} onOpenFiles={() => void navigate('/')} />
+        </div>
+      )}
     </div>
   );
 }
