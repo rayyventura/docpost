@@ -36,7 +36,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
   const { jobId } = JSON.parse(record.body) as { jobId: string };
   console.log(`Watchdog: checking job ${jobId}`);
 
-  const db = getDb();
+  const db = await getDb();
 
   // Load job
   const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));

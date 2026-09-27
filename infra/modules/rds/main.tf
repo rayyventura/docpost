@@ -136,13 +136,16 @@ resource "aws_secretsmanager_secret_version" "service_credentials" {
   for_each = toset(local.service_names)
 
   secret_id = local.service_secret_arns[each.key]
-  secret_string = jsonencode({
-    username = each.key
-    password = "PLACEHOLDER_SET_BY_BOOTSTRAP"
-    host     = aws_db_instance.main.address
-    port     = aws_db_instance.main.port
-    dbname   = each.key
-  })
+  # ECS and Lambda expect DATABASE_URL to be a postgres connection string.
+  # db-bootstrap replaces the placeholder password after roles exist.
+  secret_string = format(
+    "postgresql://%s:%s@%s:%s/%s",
+    each.key,
+    urlencode("PLACEHOLDER_SET_BY_BOOTSTRAP"),
+    aws_db_instance.main.address,
+    aws_db_instance.main.port,
+    each.key,
+  )
 
   lifecycle {
     ignore_changes = [secret_string]

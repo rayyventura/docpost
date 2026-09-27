@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "latest",
+    "@aws-sdk/client-secrets-manager": "latest",
     "@aws-sdk/client-sqs": "latest",
     "@docpost/shared": "*",
     "dotenv": "latest",

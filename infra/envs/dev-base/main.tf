@@ -287,7 +287,9 @@ resource "aws_iam_role_policy" "github_deploy" {
         Action = [
           "lambda:GetFunction",
           "lambda:GetFunctionConfiguration",
-          "lambda:UpdateFunctionCode"
+          "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration",
+          "lambda:PublishVersion",
         ]
         Resource = "arn:aws:lambda:${var.region}:${local.account_id}:function:${local.name_prefix}-*"
       },

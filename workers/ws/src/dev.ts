@@ -23,7 +23,7 @@ const server = createServer((req, res) => {
         res.writeHead(400).end();
         return;
       }
-      const db = getDb();
+      const db = await getDb();
       const rows = await db
         .select({ connectionId: wsConnections.connectionId })
         .from(wsConnections)

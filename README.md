@@ -223,7 +223,7 @@ Terraform modules cover: VPC networking, ALB, API Gateway, CloudFront CDN, ECR r
 
 The pieces that keep billing while the app is idle are the NAT gateway, the RDS instance, and the load balancer. `terraform destroy` in the dev environment removes them. Leave the state backend in `bootstrap/` in place. That bucket and lock table are what the next `terraform apply` uses to recreate the environment, and they are not the running app.
 
-### Spin the dev environment up
+### Before you start
 
 From a clone with the GitHub CLI signed in:
 
@@ -261,6 +261,8 @@ A new RDS instance is empty. Run the **Database Bootstrap** workflow (`db-bootst
 
 The deploy workflows run the same `roles` step on their own when a service secret is not ready, then migrate that service before rolling it. The seeded sign-in users are listed in `services/auth/src/db/seed.ts`.
 
+A selected binder or folder is one destination, not a fan-out to its children. The API and web images carry that mapping; the workers read `DATABASE_SECRET_ARN` so a later secret rotation does not need another Terraform apply.
+
 ### Tear the dev environment down
 
 ```bash
@@ -271,11 +273,19 @@ This runs `terraform destroy` on `infra/envs/dev` only. It deletes the dev VPC, 
 
 Locally, with `TF_VAR_rds_master_password` set: `npm run infra:dev:down:local`. `npm run infra:dev:status` lists what the dev state holds.
 
-If destroy stops because an S3 bucket still has objects, empty that bucket and run `terraform destroy` again:
+The S3 buckets do not set `force_destroy` and the ECR repositories do not set `force_delete`. If destroy stops because a bucket or repository is not empty, empty it and run `terraform destroy` again:
 
 ```bash
 aws s3 rm s3://BUCKET_NAME --recursive
+# For a versioned bucket, also delete old versions (the "Empty" button in the S3 console)
+
+aws ecr batch-delete-image --repository-name REPO_NAME \
+  --image-ids "$(aws ecr list-images --repository-name REPO_NAME --query 'imageIds' --output json)"
 ```
+
+When `terraform state list` prints nothing, dev is fully torn down.
+
+The `infra.yml` workflow runs `terraform apply -auto-approve` on dev whenever a change under `infra/**` is pushed to `main`. To keep dev down, do not merge infrastructure changes, or disable that workflow in GitHub.
 
 Do not run `terraform destroy` inside `bootstrap/`. That state bucket is protected, and removing it does not stop the NAT gateway or the database. Destroy prod only when you intend to delete production. Prod keeps a final RDS snapshot, and that snapshot can still incur a small storage charge.
 

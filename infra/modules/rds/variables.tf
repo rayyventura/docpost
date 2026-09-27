@@ -112,3 +112,9 @@ variable "client_security_group_ids" {
   type        = list(string)
   default     = []
 }
+
+variable "secret_recovery_window_days" {
+  description = "Days Secrets Manager keeps a deleted secret recoverable. 0 deletes immediately so the same name can be recreated right after a destroy."
+  type        = number
+  default     = 30
+}

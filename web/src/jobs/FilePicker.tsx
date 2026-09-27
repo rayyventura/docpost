@@ -109,15 +109,22 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
         <ul className="file-list">
           {files.map((f) => (
             <li key={f.id} className={`file-item file-${f.status}`}>
-              <span className="file-name">{f.file.name}</span>
+              <div className="file-item-main">
+                <span className="file-name">{f.file.name}</span>
+                {f.status === 'uploading' && (
+                  <span className="file-upload-badge" aria-live="polite">
+                    <span className="file-upload-dot" aria-hidden="true" />
+                    Uploading {f.progress}%
+                  </span>
+                )}
+                {f.status === 'uploaded' && (
+                  <span className="file-upload-badge file-upload-badge--done">Uploaded</span>
+                )}
+              </div>
               <span className="file-size">{formatSize(f.file.size)}</span>
-              <span className="file-status">
-                {f.status === 'hashing' && 'Preparing...'}
-                {f.status === 'ready' && 'Ready'}
-                {f.status === 'uploading' && `${f.progress}%`}
-                {f.status === 'uploaded' && 'Uploaded'}
-                {f.status === 'error' && (f.error ?? 'Error')}
-              </span>
+              {f.status === 'hashing' && <span className="file-status">Preparing...</span>}
+              {f.status === 'ready' && <span className="file-status">Ready</span>}
+              {f.status === 'error' && <span className="file-status">{f.error ?? 'Error'}</span>}
               {(f.status === 'ready' || f.status === 'error') && !disabled && (
                 <button
                   className="btn btn-sm btn-danger"

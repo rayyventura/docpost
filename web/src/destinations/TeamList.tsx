@@ -48,7 +48,7 @@ export function TeamList({ onSelect }: TeamListProps) {
   }
 
   if (teams.length === 0) {
-    return <p className="empty-state">No teams found.</p>;
+    return <p className="empty-state">You are not on a team yet, so there is nowhere to file documents.</p>;
   }
 
   return (

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { LoginPage } from './auth/LoginPage';
 import { RegisterPage } from './auth/RegisterPage';
@@ -8,18 +8,25 @@ import { DistributePage } from './jobs/DistributePage';
 import { Layout } from './layout/Layout';
 import type { ReactNode } from 'react';
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+function ProtectedLayout() {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
-  return <Layout>{children}</Layout>;
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
+  );
 }
 
 function PublicRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname;
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={from && from !== '/login' ? from : '/'} replace />;
   }
   return <>{children}</>;
 }
@@ -54,14 +61,12 @@ export function App() {
             }
           />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <DistributePage />
-              </ProtectedRoute>
-            }
-          />
+          <Route element={<ProtectedLayout />}>
+            <Route path="/" element={<DistributePage />} />
+            <Route path="/send" element={<DistributePage />} />
+            <Route path="/deliveries" element={<DistributePage />} />
+            <Route path="/deliveries/:jobId" element={<DistributePage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

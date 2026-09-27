@@ -144,6 +144,11 @@ resource "aws_lambda_function" "function" {
     aws_iam_role_policy.logs,
   ]
 
+  # CI/CD replaces the placeholder zip. Do not revert worker code on apply.
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   tags = local.common_tags
 }
 

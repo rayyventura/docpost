@@ -49,7 +49,7 @@ export function BinderList({ teamId, onSelect }: BinderListProps) {
   }
 
   if (binders.length === 0) {
-    return <p className="empty-state">No binders found in this team.</p>;
+    return <p className="empty-state">This team has no binders yet.</p>;
   }
 
   return (

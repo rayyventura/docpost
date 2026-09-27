@@ -131,6 +131,7 @@ module "rds_instance" {
   skip_final_snapshot     = true
   multi_az                = false
   backup_retention_period = 1
+  secret_recovery_window_days = 0
 
   # The secrets themselves are permanent (dev-base); this stack writes their values.
   create_secrets      = false
@@ -190,15 +191,16 @@ module "alb" {
       name              = "platform"
       port              = 3000
       health_check_path = "/health"
+      # Services call the platform without a /platform prefix.
       # /internal/* is service-to-service only; API Gateway does not route it.
-      path_patterns     = ["/platform/*", "/internal/*"]
+      path_patterns     = ["/teams*", "/binders/*", "/folders/*", "/documents*", "/internal/*"]
       priority          = 200
     },
     {
       name              = "docpost-api"
       port              = 3000
       health_check_path = "/health"
-      path_patterns     = ["/api/*"]
+      path_patterns     = ["/destinations/*", "/jobs*", "/files/*"]
       priority          = 300
     },
   ]
@@ -209,6 +211,8 @@ module "alb" {
 # =============================================================================
 module "ecs_auth" {
   source = "../../modules/ecs-service"
+
+  wait_for_steady_state = false
 
   project_name       = var.project_name
   environment        = var.environment
@@ -244,6 +248,8 @@ module "ecs_auth" {
 module "ecs_platform" {
   source = "../../modules/ecs-service"
 
+  wait_for_steady_state = false
+
   project_name       = var.project_name
   environment        = var.environment
   region             = var.region
@@ -278,8 +284,37 @@ module "ecs_platform" {
   }
 }
 
+resource "aws_iam_policy" "docpost_api_runtime" {
+  name = "${var.project_name}-${var.environment}-docpost-api-runtime"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts",
+        ]
+        Resource = "${module.s3_staging.staging_bucket_arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+        ]
+        Resource = [module.sqs.queue_arns["jobs"]]
+      },
+    ]
+  })
+}
+
 module "ecs_docpost_api" {
   source = "../../modules/ecs-service"
+
+  wait_for_steady_state = false
 
   project_name       = var.project_name
   environment        = var.environment
@@ -303,16 +338,21 @@ module "ecs_docpost_api" {
   target_group_arn       = module.alb.target_group_arns["docpost-api"]
   alb_security_group_ids = [module.alb.security_group_id]
   secret_arns            = [module.rds_instance.secret_arns["docpost_service"]]
+  task_role_policy_arns  = [aws_iam_policy.docpost_api_runtime.arn]
 
   secrets = {
     DATABASE_URL = module.rds_instance.secret_arns["docpost_service"]
   }
 
   environment_variables = {
-    NODE_ENV      = var.environment
-    PORT          = "3000"
-    AUTH_JWKS_URL = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
-    PLATFORM_URL  = "http://${module.alb.alb_dns_name}"
+    NODE_ENV       = var.environment
+    PORT           = "3000"
+    AWS_REGION     = var.region
+    PLATFORM_URL   = "http://${module.alb.alb_dns_name}"
+    AUTH_JWKS_URL  = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
+    AUTH_TOKEN_URL = "http://${module.alb.alb_dns_name}/auth/token"
+    S3_BUCKET      = module.s3_staging.staging_bucket_name
+    JOB_QUEUE_URL  = module.sqs.queue_urls["jobs"]
   }
 }
 
@@ -339,15 +379,57 @@ module "api_routes" {
   jwt_audience = []
 
   routes = [
-    { route_key = "ANY /auth/{proxy+}", require_auth = false },
-    { route_key = "ANY /platform/{proxy+}", require_auth = true },
-    { route_key = "ANY /api/{proxy+}", require_auth = true },
+    { route_key = "POST /auth/{proxy+}", require_auth = false },
+    { route_key = "GET /.well-known/{proxy+}", require_auth = false },
+    { route_key = "GET /destinations/{proxy+}", require_auth = true },
+    { route_key = "GET /jobs", require_auth = true },
+    { route_key = "POST /jobs", require_auth = true },
+    { route_key = "GET /jobs/{proxy+}", require_auth = true },
+    { route_key = "POST /files/{proxy+}", require_auth = true },
   ]
 }
 
 # =============================================================================
 # Lambda Workers
 # =============================================================================
+data "aws_secretsmanager_secret_version" "docpost_service" {
+  secret_id = module.rds_instance.secret_arns["docpost_service"]
+}
+
+resource "aws_iam_policy" "lambda_workers_runtime" {
+  name = "${var.project_name}-${var.environment}-lambda-workers-runtime"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+        ]
+        Resource = "${module.s3_staging.staging_bucket_arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+        ]
+        Resource = [
+          module.sqs.queue_arns["tasks"],
+          module.sqs.queue_arns["jobs"],
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+        ]
+        Resource = module.rds_instance.secret_arns["docpost_service"]
+      },
+    ]
+  })
+}
+
 module "lambda_fanout" {
   source = "../../modules/lambda"
 
@@ -360,6 +442,7 @@ module "lambda_fanout" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  policy_arns      = [aws_iam_policy.lambda_workers_runtime.arn]
 
   vpc_config = {
     subnet_ids         = module.network.private_subnet_ids
@@ -373,9 +456,11 @@ module "lambda_fanout" {
   }
 
   environment_variables = {
-    NODE_ENV       = var.environment
-    S3_BUCKET      = module.s3_staging.staging_bucket_name
-    TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
+    NODE_ENV            = var.environment
+    S3_BUCKET           = module.s3_staging.staging_bucket_name
+    TASK_QUEUE_URL      = module.sqs.queue_urls["tasks"]
+    DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
+    DATABASE_SECRET_ARN = module.rds_instance.secret_arns["docpost_service"]
   }
 }
 
@@ -386,11 +471,12 @@ module "lambda_delivery" {
   environment   = var.environment
   function_name = "delivery"
   handler       = "handler.handler"
-  memory_size   = 256
+  memory_size   = 1024
   timeout       = 60
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  policy_arns      = [aws_iam_policy.lambda_workers_runtime.arn]
 
   vpc_config = {
     subnet_ids         = module.network.private_subnet_ids
@@ -404,10 +490,12 @@ module "lambda_delivery" {
   }
 
   environment_variables = {
-    NODE_ENV       = var.environment
-    S3_BUCKET      = module.s3_staging.staging_bucket_name
-    PLATFORM_URL   = "http://${module.alb.alb_dns_name}"
-    AUTH_TOKEN_URL = "http://${module.alb.alb_dns_name}/auth/token"
+    NODE_ENV            = var.environment
+    S3_BUCKET           = module.s3_staging.staging_bucket_name
+    PLATFORM_URL        = "http://${module.alb.alb_dns_name}"
+    AUTH_TOKEN_URL      = "http://${module.alb.alb_dns_name}/auth/token"
+    DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
+    DATABASE_SECRET_ARN = module.rds_instance.secret_arns["docpost_service"]
   }
 }
 
@@ -423,6 +511,7 @@ module "lambda_watchdog" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  policy_arns      = [aws_iam_policy.lambda_workers_runtime.arn]
 
   vpc_config = {
     subnet_ids         = module.network.private_subnet_ids
@@ -436,10 +525,12 @@ module "lambda_watchdog" {
   }
 
   environment_variables = {
-    NODE_ENV       = var.environment
-    S3_BUCKET      = module.s3_staging.staging_bucket_name
-    TASK_QUEUE_URL = module.sqs.queue_urls["tasks"]
-    JOB_QUEUE_URL  = module.sqs.queue_urls["jobs"]
+    NODE_ENV            = var.environment
+    S3_BUCKET           = module.s3_staging.staging_bucket_name
+    TASK_QUEUE_URL      = module.sqs.queue_urls["tasks"]
+    JOB_QUEUE_URL       = module.sqs.queue_urls["jobs"]
+    DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
+    DATABASE_SECRET_ARN = module.rds_instance.secret_arns["docpost_service"]
   }
 }
 
@@ -455,6 +546,7 @@ module "lambda_ws_lifecycle" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  policy_arns      = [aws_iam_policy.lambda_workers_runtime.arn]
 
   vpc_config = {
     subnet_ids         = module.network.private_subnet_ids
@@ -462,7 +554,12 @@ module "lambda_ws_lifecycle" {
   }
 
   environment_variables = {
-    NODE_ENV = var.environment
+    NODE_ENV            = var.environment
+    DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
+    DATABASE_SECRET_ARN = module.rds_instance.secret_arns["docpost_service"]
+    PLATFORM_URL        = "http://${module.alb.alb_dns_name}"
+    AUTH_TOKEN_URL      = "http://${module.alb.alb_dns_name}/auth/token"
+    AUTH_JWKS_URL       = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
   }
 }
 

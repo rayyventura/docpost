@@ -50,3 +50,29 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
 
   return response.json() as Promise<T>;
 }
+
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (response.status === 401 && !path.startsWith('/auth/')) {
+    clearToken();
+    onUnauthorized?.();
+    throw new Error('Unauthorized');
+  }
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Download failed' } }));
+    throw new Error(error.error?.message || 'Download failed');
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
