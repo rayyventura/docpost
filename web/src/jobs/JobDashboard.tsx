@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import type { JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
@@ -6,6 +7,22 @@ import { formatDate } from '../formatDate';
 
 interface JobDashboardProps {
   jobId?: string;
+  onOpenFiles?: () => void;
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  in_progress: 'In progress',
+  completed: 'Completed',
+  failed: 'Failed',
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status.replaceAll('_', ' ');
+}
+
+function statusClass(status: string): string {
+  return `status-badge status-${status.replaceAll('_', '-')}`;
 }
 
 function uploadedByLine(name: string, createdAt: string): string {
@@ -21,9 +38,10 @@ function aggregateStatus(counts: JobSummary['counts']): string {
   return 'in_progress';
 }
 
-export function JobDashboard({ jobId }: JobDashboardProps) {
+export function JobDashboard({ jobId, onOpenFiles }: JobDashboardProps) {
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobSummary[]>([]);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(jobId ?? null);
+  const selectedJobId = jobId ?? null;
   const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null);
   const [tasks, setTasks] = useState<TaskDetail[]>([]);
   const [taskTotal, setTaskTotal] = useState(0);
@@ -32,8 +50,9 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!jobId) return;
-    setSelectedJobId(jobId);
+    setSelectedJob(null);
+    setTasks([]);
+    setTaskTotal(0);
     setTaskPage(1);
     setStatusFilter('');
   }, [jobId]);
@@ -141,28 +160,22 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
   }, [selectedJobId]);
 
   const handleSelectJob = useCallback((id: string) => {
-    setSelectedJobId(id);
-    setTaskPage(1);
-    setStatusFilter('');
-  }, []);
-
-  const downloadFile = useCallback(async (fileId: string) => {
-    const data = await apiRequest<{ url: string }>(`/files/${fileId}/download-url`, { method: 'POST' });
-    window.open(data.url, '_blank', 'noopener');
-  }, []);
+    void navigate(`/deliveries/${id}`);
+  }, [navigate]);
 
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
+        <p className="page-lead">A record of each send. Download the files from Files, in the folder they were sent to.</p>
         {jobs.length === 0 ? (
-          <p className="empty-state">No deliveries yet</p>
+          <p className="empty-state">Nothing has been sent yet. Use Send to file documents into a team.</p>
         ) : (
           <ul className="job-list">
             {jobs.map((j) => (
               <li key={j.jobId} className="job-item" onClick={() => handleSelectJob(j.jobId)}>
                 <div className="job-item-header">
-                  <span className={`status-badge status-${j.aggregateStatus}`}>
-                    {j.aggregateStatus}
+                  <span className={statusClass(j.aggregateStatus)}>
+                    {statusLabel(j.aggregateStatus)}
                   </span>
                   <span className="job-item-meta">
                     {uploadedByLine(j.submitterName, j.createdAt)}
@@ -183,17 +196,23 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
   return (
     <div className="job-dashboard">
       <div className="dashboard-header">
-        <button className="btn" onClick={() => setSelectedJobId(null)}>
+        <button className="btn" onClick={() => void navigate('/deliveries')}>
           &larr; All Deliveries
         </button>
         <h2>Delivery Details</h2>
+        {onOpenFiles && (
+          <button type="button" className="btn" onClick={onOpenFiles}>
+            Open Files
+          </button>
+        )}
       </div>
+      <p className="page-lead">This is the record of the send. When a file is finished, download it from Files in the destination shown below.</p>
 
       {selectedJob && (
         <div className="job-summary">
           <div className="summary-row">
-            <span className={`status-badge status-${selectedJob.aggregateStatus}`}>
-              {selectedJob.aggregateStatus}
+            <span className={statusClass(selectedJob.aggregateStatus)}>
+              {statusLabel(selectedJob.aggregateStatus)}
             </span>
             <span>{selectedJob.taskCount} total items</span>
             <span className="job-item-meta">
@@ -213,7 +232,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
             )}
             {selectedJob.counts.in_progress > 0 && (
               <div
-                className="count-segment count-in_progress"
+                className="count-segment count-in-progress"
                 style={{
                   width: `${(selectedJob.counts.in_progress / selectedJob.taskCount) * 100}%`,
                 }}
@@ -255,7 +274,7 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
         >
           <option value="">All statuses</option>
           <option value="pending">Pending</option>
-          <option value="in_progress">In Progress</option>
+          <option value="in_progress">In progress</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
         </select>
@@ -280,16 +299,11 @@ export function JobDashboard({ jobId }: JobDashboardProps) {
                 <td>{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">{t.destination ?? '—'}</td>
                 <td>
-                  <span className={`status-badge status-${t.status}`}>{t.status}</span>
+                  <span className={statusClass(t.status)}>{statusLabel(t.status)}</span>
                 </td>
                 <td>{t.attemptCount}</td>
                 <td>
                   {t.failureReason && <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>}
-                  {t.status === 'completed' && (
-                    <button type="button" className="btn btn-sm" onClick={() => void downloadFile(t.fileId)}>
-                      Download
-                    </button>
-                  )}
                 </td>
               </tr>
             ))}

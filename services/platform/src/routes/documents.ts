@@ -3,11 +3,12 @@ import { eq, and } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import multer from 'multer';
-import { AppError, ForbiddenError, ValidationError } from '@docpost/shared';
+import { AppError, ForbiddenError, NotFoundError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { binders, teamMembers, folders, documents } from '../db/schema.js';
-import { requireServiceAuth } from '../middleware/auth.js';
+import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
 
 const ALLOWED_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -74,6 +75,67 @@ function parseMetadata(raw: string): IngestMetadata {
     onBehalfOf,
   };
 }
+
+router.get(
+  '/documents/:documentId/download',
+  requireUserAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.sub;
+      const documentId = req.params.documentId as string;
+      const db = getDb();
+
+      const [document] = await db
+        .select()
+        .from(documents)
+        .where(eq(documents.id, documentId))
+        .limit(1);
+
+      if (!document) {
+        throw new NotFoundError('Document not found');
+      }
+
+      const binderResult = await db
+        .select({ teamId: binders.teamId })
+        .from(binders)
+        .where(eq(binders.id, document.binderId))
+        .limit(1);
+
+      if (binderResult.length === 0) {
+        throw new NotFoundError('Document not found');
+      }
+
+      const membership = await db
+        .select()
+        .from(teamMembers)
+        .where(
+          and(
+            eq(teamMembers.teamId, binderResult[0].teamId),
+            eq(teamMembers.userId, userId),
+          ),
+        )
+        .limit(1);
+
+      if (membership.length === 0) {
+        throw new ForbiddenError();
+      }
+
+      const filePath = path.join(path.resolve(process.cwd(), 'uploads'), document.id);
+      try {
+        await fs.access(filePath);
+      } catch {
+        throw new NotFoundError('Document not found');
+      }
+
+      const filename = document.name.replace(/["\r\n]/g, '');
+      res.setHeader('Content-Type', document.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      createReadStream(filePath).pipe(res);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.post(
   '/documents',

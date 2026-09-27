@@ -33,6 +33,26 @@ function destKey(d: { teamId: string; binderId?: string | null; folderId?: strin
   return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
 }
 
+function folderDescendantIds(
+  folderId: string,
+  foldersByParent: Map<string, FolderNode[]>,
+): string[] {
+  const children = foldersByParent.get(`folder:${folderId}`) ?? [];
+  return children.flatMap((child) => [child.id, ...folderDescendantIds(child.id, foldersByParent)]);
+}
+
+function isDescendantOf(
+  parent: Destination,
+  candidate: Destination,
+  foldersByParent: Map<string, FolderNode[]>,
+): boolean {
+  if (parent.teamId !== candidate.teamId || destKey(parent) === destKey(candidate)) return false;
+  if (!parent.binderId) return true;
+  if (parent.binderId !== candidate.binderId || !candidate.folderId) return false;
+  if (!parent.folderId) return true;
+  return folderDescendantIds(parent.folderId, foldersByParent).includes(candidate.folderId);
+}
+
 function Expander({
   loading,
   expandable,
@@ -252,11 +272,15 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
       const key = destKey(dest);
       if (selected.some((s) => destKey(s) === key)) {
         onChange(selected.filter((s) => destKey(s) !== key));
-      } else {
-        onChange([...selected, dest]);
+        return;
       }
+
+      onChange([
+        ...selected.filter((s) => !isDescendantOf(dest, s, foldersByParent)),
+        dest,
+      ]);
     },
-    [selected, onChange],
+    [selected, onChange, foldersByParent],
   );
 
   function renderFolders(parentKey: string, depth: number) {
@@ -352,14 +376,13 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
                     '▸'
                   )}
                 </button>
-                <label className="tree-check-label">
-                  <input
-                    type="checkbox"
-                    checked={isSelected({ teamId: team.id })}
-                    onChange={() => toggleDestination({ teamId: team.id, teamName: team.name })}
-                  />
-                  <span className="tree-name tree-name-team">{team.name}</span>
-                </label>
+                <button
+                  type="button"
+                  className="tree-team-name"
+                  onClick={() => toggleTeam(team)}
+                >
+                  {team.name}
+                </button>
               </div>
 
               {isExpanded &&

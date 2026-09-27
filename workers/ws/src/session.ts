@@ -63,7 +63,7 @@ async function teamIds(userId: string): Promise<Set<string>> {
 }
 
 async function canViewJob(userId: string, jobId: string): Promise<boolean> {
-  const db = getDb();
+  const db = await getDb();
   const [job] = await db
     .select({ submittedByUserId: jobs.submittedByUserId })
     .from(jobs)
@@ -87,7 +87,7 @@ export async function connect(connectionId: string, token: string | undefined): 
   const userId = await userIdFromToken(token);
   if (!userId) return false;
 
-  const db = getDb();
+  const db = await getDb();
   await db.insert(wsConnections).values({ connectionId, userId }).onConflictDoUpdate({
     target: wsConnections.connectionId,
     set: { userId, jobId: null, connectedAt: new Date() },
@@ -96,7 +96,7 @@ export async function connect(connectionId: string, token: string | undefined): 
 }
 
 export async function subscribe(connectionId: string, jobId: string): Promise<'ok' | 'missing' | 'forbidden'> {
-  const db = getDb();
+  const db = await getDb();
   const [connection] = await db
     .select({ userId: wsConnections.userId })
     .from(wsConnections)
@@ -110,6 +110,6 @@ export async function subscribe(connectionId: string, jobId: string): Promise<'o
 }
 
 export async function disconnect(connectionId: string): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db.delete(wsConnections).where(eq(wsConnections.connectionId, connectionId));
 }

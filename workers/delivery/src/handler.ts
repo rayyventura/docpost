@@ -67,7 +67,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
   const { taskId } = JSON.parse(record.body) as { taskId: string };
   console.log(`Delivery: processing task ${taskId}`);
 
-  const db = getDb();
+  const db = await getDb();
 
   // Claim the task
   const [claimed] = await db

@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireUserAuth } from '../middleware/auth.js';
 
@@ -106,6 +107,41 @@ router.get(
         authorization,
       );
       res.status(status).json(body);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  '/destinations/documents/:id/download',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const authorization = req.headers.authorization;
+      if (!authorization) {
+        res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing authorization' } });
+        return;
+      }
+
+      const response = await fetch(`${PLATFORM_URL}/documents/${req.params.id}/download`, {
+        headers: { Authorization: authorization },
+      });
+
+      res.status(response.status);
+      const contentType = response.headers.get('content-type');
+      const disposition = response.headers.get('content-disposition');
+      if (contentType) res.setHeader('Content-Type', contentType);
+      if (disposition) res.setHeader('Content-Disposition', disposition);
+
+      if (!response.ok || !response.body) {
+        const body: unknown = await response.json().catch(() => ({
+          error: { code: 'UPSTREAM_ERROR', message: 'Platform service unavailable' },
+        }));
+        res.json(body);
+        return;
+      }
+
+      Readable.fromWeb(response.body).pipe(res);
     } catch (err) {
       next(err);
     }

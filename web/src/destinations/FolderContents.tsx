@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiRequest } from '../api/client';
+import { apiDownload, apiRequest } from '../api/client';
 import { formatDate } from '../formatDate';
 
 interface Folder {
@@ -35,6 +35,15 @@ function formatFileSize(bytes: number): string {
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function fileKind(contentType: string): string {
+  if (contentType.includes('pdf')) return 'PDF';
+  if (contentType.includes('word') || contentType.includes('wordprocessingml')) return 'Word';
+  if (contentType.includes('spreadsheet') || contentType.includes('excel')) return 'Excel';
+  if (contentType === 'image/png') return 'PNG';
+  if (contentType === 'image/jpeg') return 'JPEG';
+  return 'File';
+}
+
 function contentTypeIcon(contentType: string): string {
   if (contentType.startsWith('image/')) return '\uD83D\uDDBC\uFE0F';
   if (contentType.includes('pdf')) return '\uD83D\uDCC4';
@@ -48,6 +57,20 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   const [contents, setContents] = useState<ContentsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [downloadError, setDownloadError] = useState('');
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  async function downloadDocument(documentId: string, name: string) {
+    setDownloadingId(documentId);
+    setDownloadError('');
+    try {
+      await apiDownload(`/destinations/documents/${documentId}/download`, name);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Download failed');
+    } finally {
+      setDownloadingId(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -92,11 +115,12 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   const isEmpty = contents.folders.length === 0 && contents.documents.length === 0;
 
   if (isEmpty) {
-    return <p className="empty-state">This location is empty.</p>;
+    return <p className="empty-state">Nothing has been sent here yet.</p>;
   }
 
   return (
     <div className="folder-contents">
+      {downloadError && <div className="error-banner">{downloadError}</div>}
       {contents.folders.length > 0 && (
         <section>
           <h3 className="section-heading">Folders</h3>
@@ -131,9 +155,17 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
                   <div className="item-info">
                     <span className="item-name">{doc.name}</span>
                     <span className="item-meta">
-                      {formatFileSize(doc.sizeBytes)} &middot; {doc.contentType} &middot; {formatDate(doc.createdAt)}
+                      {formatFileSize(Number(doc.sizeBytes))} &middot; {fileKind(doc.contentType)} &middot; {formatDate(doc.createdAt)}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm item-download"
+                    disabled={downloadingId === doc.id}
+                    onClick={() => void downloadDocument(doc.id, doc.name)}
+                  >
+                    {downloadingId === doc.id ? 'Downloading...' : 'Download'}
+                  </button>
                 </div>
               </li>
             ))}

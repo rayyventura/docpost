@@ -10,7 +10,7 @@ export async function pushTaskUpdate(input: {
   failureReason?: string | null;
 }): Promise<void> {
   try {
-    const db = getDb();
+    const db = await getDb();
     const rows = await db
       .select({ status: tasks.status, count: sql<number>`count(*)::int` })
       .from(tasks)
@@ -57,7 +57,9 @@ export async function pushTaskUpdate(input: {
       return;
     }
 
-    const pushUrl = process.env.WS_PUSH_URL ?? 'http://localhost:3004/push';
+    const pushUrl = process.env.WS_PUSH_URL;
+    if (!pushUrl) return;
+
     const res = await fetch(pushUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

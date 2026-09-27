@@ -6,7 +6,7 @@ import { getDb } from '../db/index.js';
 import { jobs, files, tasks } from '../db/schema.js';
 import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
-import { destinationPaths, teamBinderIds, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
+import { destinationPaths, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
 
 const router = Router();
@@ -25,7 +25,7 @@ const ALLOWED_CONTENT_TYPES = [
 
 const destinationSchema = z.object({
   teamId: z.string().uuid(),
-  binderId: z.string().uuid().nullable().optional(),
+  binderId: z.string().uuid(),
   folderId: z.string().uuid().nullable().optional(),
 });
 
@@ -79,29 +79,7 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
       }
     }
 
-    const token = bearerToken(req);
-    const bindersByTeam = new Map<string, string[]>();
-    for (const mapping of mappings) {
-      for (const dest of mapping.destinations) {
-        if (!dest.binderId && !bindersByTeam.has(dest.teamId)) {
-          bindersByTeam.set(dest.teamId, await teamBinderIds(dest.teamId, token));
-        }
-      }
-    }
-
-    const expandedMappings = mappings.map((mapping) => ({
-      ...mapping,
-      destinations: mapping.destinations.flatMap((dest) => {
-        if (dest.binderId) return [dest];
-        return (bindersByTeam.get(dest.teamId) ?? []).map((binderId) => ({
-          ...dest,
-          binderId,
-        }));
-      }),
-    }));
-
-    // Count total tasks
-    const totalTasks = expandedMappings.reduce((sum, m) => sum + m.destinations.length, 0);
+    const totalTasks = mappings.reduce((sum, m) => sum + m.destinations.length, 0);
     const now = new Date();
     const stagingDeadline = new Date(now.getTime() + STAGING_DEADLINE_MINUTES * 60_000);
     const nextCheckAt = new Date(now.getTime() + 60_000); // 60s delay
@@ -149,10 +127,9 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
         region: string;
       }> = [];
 
-      for (const mapping of expandedMappings) {
+      for (const mapping of mappings) {
         const fileRow = fileRows[mapping.fileIndex];
         for (const dest of mapping.destinations) {
-          if (!dest.binderId) continue;
           taskValues.push({
             jobId,
             fileId: fileRow.id,
@@ -232,7 +209,7 @@ router.get('/jobs', requireUserAuth, async (req: Request, res: Response, next: N
         count: sql<number>`count(*)::int`,
       })
       .from(tasks)
-      .where(sql`${tasks.jobId} IN ${jobIds}`)
+      .where(inArray(tasks.jobId, jobIds))
       .groupBy(tasks.jobId, tasks.status);
 
     const countsMap = new Map<string, Record<string, number>>();
@@ -372,7 +349,7 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
       ? await db
           .select({ id: files.id, originalName: files.originalName })
           .from(files)
-          .where(sql`${files.id} IN ${fileIds}`)
+          .where(inArray(files.id, fileIds))
       : [];
     const fileNameMap = new Map(fileNames.map((f) => [f.id, f.originalName]));
     const paths = await destinationPaths(taskRows.map((t) => ({

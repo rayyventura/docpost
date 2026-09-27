@@ -45,7 +45,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
     console.log(`Processing upload event for key: ${s3Key}`);
 
-    const db = getDb();
+    const db = await getDb();
 
     // Look up file by s3Key
     const [file] = await db

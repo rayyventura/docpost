@@ -48,6 +48,7 @@ export function DestinationsPage() {
 
   return (
     <div className="destinations-page">
+      <p className="page-lead">Open a team, then a binder or folder, to find a document and download it.</p>
       <nav className="breadcrumb" aria-label="Navigation">
         {breadcrumb.map((item, index) => {
           const isLast = index === breadcrumb.length - 1;

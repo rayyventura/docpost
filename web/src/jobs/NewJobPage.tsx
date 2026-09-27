@@ -68,19 +68,48 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
         body: JSON.stringify({ files: filePayload, mappings: mappingPayload }),
       });
 
-      const updatedFiles = [...files];
-      readyFiles.forEach((sf, i) => {
-        const idx = updatedFiles.findIndex((f) => f.id === sf.id);
-        if (idx >= 0 && response.uploads[i]) {
-          updatedFiles[idx] = {
-            ...updatedFiles[idx],
-            serverFileId: response.uploads[i].fileId,
-            presignedUrl: response.uploads[i].presignedUrl,
-          };
-        }
+      const updatedFiles = files.map((file) => {
+        const uploadIndex = readyFiles.findIndex((ready) => ready.id === file.id);
+        if (uploadIndex < 0 || !response.uploads[uploadIndex]) return file;
+        return {
+          ...file,
+          serverFileId: response.uploads[uploadIndex].fileId,
+          presignedUrl: response.uploads[uploadIndex].presignedUrl,
+          status: 'uploading' as const,
+          progress: 0,
+        };
       });
+      setFiles(updatedFiles);
+
       const filesToUpload = updatedFiles.filter((f) => f.serverFileId);
-      void uploadFiles(filesToUpload, response.uploads, () => {}, () => {});
+      const { failed } = await uploadFiles(
+        filesToUpload,
+        response.uploads,
+        (fileId, progress) => {
+          setFiles((current) =>
+            current.map((file) => (file.id === fileId ? { ...file, progress } : file)),
+          );
+        },
+        (fileId, status, uploadError) => {
+          setFiles((current) =>
+            current.map((file) =>
+              file.id === fileId
+                ? { ...file, status, error: uploadError, progress: status === 'uploaded' ? 100 : file.progress }
+                : file,
+            ),
+          );
+        },
+      );
+
+      if (failed > 0) {
+        setError(
+          failed === 1
+            ? 'One file failed to upload. Remove it or try sending again.'
+            : `${failed} files failed to upload. Remove them or try sending again.`,
+        );
+        setSubmitting(false);
+        return;
+      }
 
       setFiles([]);
       setDestinations([]);
@@ -96,12 +125,13 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
 
   return (
     <div className="new-job-page">
+      <p className="page-lead">Choose where each file should be filed, then send it. You will download it later from Files.</p>
       <div className="distribute-panels">
-        <div className="panel-left">
+        <div className={`panel-left ${submitting ? 'panel-left--locked' : ''}`}>
           <DestinationTree key={formKey} selected={destinations} onChange={setDestinations} />
         </div>
         <div className="panel-right">
-          <div className="panel-right-header">Files</div>
+          <div className="panel-right-header">To send</div>
           <FilePicker
             files={files}
             onFilesAdded={handleFilesAdded}
@@ -118,14 +148,16 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
               <span key={i} className="dest-chip">
                 {d.binderName ? `${d.teamName} / ${d.binderName}` : d.teamName}
                 {d.folderName && ` / ${d.folderName}`}
-                <button
-                  className="chip-remove"
-                  onClick={() =>
-                    setDestinations(destinations.filter((_, j) => j !== i))
-                  }
-                >
-                  &times;
-                </button>
+                {!submitting && (
+                  <button
+                    className="chip-remove"
+                    onClick={() =>
+                      setDestinations(destinations.filter((_, j) => j !== i))
+                    }
+                  >
+                    &times;
+                  </button>
+                )}
               </span>
             ))}
           </div>
@@ -137,7 +169,11 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       <div className="job-actions">
         <span className="send-button-wrap" title={disabledReason}>
           <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? 'Sending...' : 'Send'}
+            {submitting
+              ? files.some((file) => file.status === 'uploading')
+                ? 'Uploading...'
+                : 'Sending...'
+              : 'Send'}
           </button>
           {disabledReason && <span className="send-tooltip" role="tooltip">{disabledReason}</span>}
         </span>

@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { errorHandler } from '@docpost/shared';
+import { allowOptions, errorHandler } from '@docpost/shared';
 import { initKeys, getKid } from './crypto/keys.js';
 import registerRouter from './routes/register.js';
 import loginRouter from './routes/login.js';
@@ -16,6 +16,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 
+app.use(allowOptions);
 app.use(express.json());
 
 // Health check
