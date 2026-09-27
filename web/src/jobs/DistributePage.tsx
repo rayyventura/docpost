@@ -14,16 +14,16 @@ export function DistributePage() {
     <div className="distribute-page">
       <div className="page-tabs">
         <NavLink to="/" end className={({ isActive }) => tabClass(isActive)}>
-          Files
+          Documents
         </NavLink>
         <NavLink to="/send" className={({ isActive }) => tabClass(isActive)}>
-          Send
+          Send documents
         </NavLink>
         <NavLink
           to={id ? `/deliveries/${id}` : '/deliveries'}
           className={({ isActive }) => tabClass(isActive)}
         >
-          Deliveries
+          Delivery audit
         </NavLink>
       </div>
 

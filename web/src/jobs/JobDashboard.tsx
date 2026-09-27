@@ -236,13 +236,13 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         <p className="page-lead">
           An audit of each send: who filed what, where it was placed, and whether it completed.
           <br />
-          The documents themselves are in Files.
+          The documents themselves are in Documents.
         </p>
         {listLoading ? (
           <PageLoading label="Loading deliveries" />
         ) : jobs.length === 0 ? (
           <ContentReveal>
-            <p className="empty-state">Nothing has been sent yet. Use Send to place documents in a destination.</p>
+            <p className="empty-state">Nothing has been sent yet. Use Send documents to place them in a destination.</p>
           </ContentReveal>
         ) : (
           <ContentReveal>
@@ -274,7 +274,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     <div className="job-dashboard">
       <div className="dashboard-header">
         <button className="btn" onClick={() => void navigate('/deliveries')}>
-          &larr; All Deliveries
+          &larr; Delivery audit
         </button>
         <h2>Delivery Details</h2>
         <button
@@ -282,10 +282,14 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           className="btn"
           onClick={() => openInFiles(filesStateFromTasks(visibleTasks))}
         >
-          View in Files
+          View in Documents
         </button>
       </div>
-      <p className="page-lead">Audit record for this send. The file itself is stored in the destination listed below.</p>
+      <p className="page-lead">
+        Audit record for this send.
+        <br />
+        Authorized users can download the document from Documents.
+      </p>
 
       {visibleJob && (
         <div className="job-summary">
