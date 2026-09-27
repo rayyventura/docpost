@@ -1,5 +1,5 @@
 export function deliverySocketUrl(token: string): string {
-  const configured = import.meta.env.VITE_WS_URL;
+  const configured = import.meta.env.VITE_WS_URL?.trim();
   if (configured) {
     const url = new URL(configured);
     url.searchParams.set('token', token);
