@@ -6,16 +6,25 @@ import { tasks, wsConnections } from './schema.js';
 export async function pushTaskUpdate(input: {
   jobId: string;
   taskId: string;
+  fileId?: string;
+  fileName?: string | null;
+  attemptCount?: number;
   status: string;
   failureReason?: string | null;
 }): Promise<void> {
   try {
     const db = await getDb();
-    const rows = await db
-      .select({ status: tasks.status, count: sql<number>`count(*)::int` })
-      .from(tasks)
-      .where(eq(tasks.jobId, input.jobId))
-      .groupBy(tasks.status);
+    const [rows, connections] = await Promise.all([
+      db
+        .select({ status: tasks.status, count: sql<number>`count(*)::int` })
+        .from(tasks)
+        .where(eq(tasks.jobId, input.jobId))
+        .groupBy(tasks.status),
+      db
+        .select({ connectionId: wsConnections.connectionId })
+        .from(wsConnections)
+        .where(eq(wsConnections.jobId, input.jobId)),
+    ]);
 
     const counts = { pending: 0, in_progress: 0, completed: 0, failed: 0 };
     for (const row of rows) {
@@ -26,6 +35,9 @@ export async function pushTaskUpdate(input: {
       type: 'task_update',
       jobId: input.jobId,
       taskId: input.taskId,
+      fileId: input.fileId,
+      fileName: input.fileName ?? undefined,
+      attemptCount: input.attemptCount,
       status: input.status,
       failureReason: input.failureReason ?? undefined,
       counts,
@@ -34,10 +46,6 @@ export async function pushTaskUpdate(input: {
     const callback = process.env.WS_CALLBACK_URL;
     if (callback) {
       const client = new ApiGatewayManagementApiClient({ endpoint: callback });
-      const connections = await db
-        .select({ connectionId: wsConnections.connectionId })
-        .from(wsConnections)
-        .where(eq(wsConnections.jobId, input.jobId));
 
       await Promise.all(connections.map(async (connection) => {
         try {
