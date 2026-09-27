@@ -73,10 +73,15 @@ jobs:
           API_BASE="$(get api_base)"
           SPA_BUCKET="$(get spa_bucket_name)"
           DISTRIBUTION_ID="$(get cloudfront_distribution_id)"
+          WS_URL=""
+          if ws_out="$(get ws_url 2>/dev/null)"; then
+            WS_URL="$ws_out"
+          fi
           {
             echo "api_base=${API_BASE}"
             echo "spa_bucket=${SPA_BUCKET}"
             echo "distribution_id=${DISTRIBUTION_ID}"
+            echo "ws_url=${WS_URL}"
           } >> "$GITHUB_OUTPUT"
       - run: npm ci
         if: env.DEPLOY_ENABLED == 'true'
@@ -84,8 +89,10 @@ jobs:
         if: env.DEPLOY_ENABLED == 'true'
         env:
           VITE_API_BASE: ${{ steps.ssm.outputs.api_base }}
+          VITE_WS_URL: ${{ steps.ssm.outputs.ws_url }}
         run: |
           echo "VITE_API_BASE=$VITE_API_BASE"
+          echo "VITE_WS_URL=$VITE_WS_URL"
           npx turbo build --filter=@docpost/web
       - name: Deploy to S3 + invalidate CloudFront
         if: env.DEPLOY_ENABLED == 'true'
