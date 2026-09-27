@@ -390,7 +390,7 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
 
   const toggleDestination = useCallback(
     (dest: Destination) => {
-      if (!dest.binderId) return;
+      if (!dest.binderId || !dest.folderId) return;
 
       const key = destKey(dest);
       if (selected.some((s) => destKey(s) === key)) {
@@ -515,30 +515,22 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
                     ? binderFolders.length > 0
                     : !foldersByParent.has(binderKey));
 
-                  const binderDest: Destination = {
-                    teamId: binder.teamId,
-                    teamName: binder.teamName,
-                    binderId: binder.id,
-                    binderName: binder.name,
-                  };
-
                   return (
                     <div key={binder.id}>
-                      <div className="tree-row" style={{ paddingLeft: '20px' }}>
+                      <div className="tree-row tree-row-binder" style={{ paddingLeft: '20px' }}>
                         <Expander
                           loading={binderLoading}
                           expandable={hasFolders}
                           expanded={binderExpanded}
                           onClick={() => toggleBinder(binder)}
                         />
-                        <label className="tree-check-label">
-                          <input
-                            type="checkbox"
-                            checked={isSelected(binderDest)}
-                            onChange={() => toggleDestination(binderDest)}
-                          />
-                          <span className="tree-name">{binder.name}</span>
-                        </label>
+                        <button
+                          type="button"
+                          className="tree-binder-name"
+                          onClick={() => toggleBinder(binder)}
+                        >
+                          {binder.name}
+                        </button>
                       </div>
                       {binderExpanded &&
                         renderFolders(`binder:${binder.id}`, 2)}

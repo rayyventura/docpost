@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
 import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail } from './types';
-import { filesStateFromTask, filesStateFromTasks } from './filesLocation';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 
@@ -67,8 +66,48 @@ function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status.replaceAll('_', ' ');
 }
 
+const MAX_ATTEMPTS = 3;
+
+function exhaustedFailureReason(task: TaskDetail): string {
+  return (
+    task.failureReason ??
+    `RETRIES_EXHAUSTED ${JSON.stringify({
+      fileName: task.fileName ?? 'Document',
+      attemptCount: String(task.attemptCount),
+    })}`
+  );
+}
+
+function displayTask(task: TaskDetail): TaskDetail {
+  if (
+    (task.status === 'pending' || task.status === 'in_progress') &&
+    task.attemptCount >= MAX_ATTEMPTS
+  ) {
+    return {
+      ...task,
+      status: 'failed',
+      failureReason: exhaustedFailureReason(task),
+    };
+  }
+  return task;
+}
+
 function statusClass(status: string): string {
   return `status-badge status-${status.replaceAll('_', '-')}`;
+}
+
+function documentsLocation(task: TaskDetail): FilesLocationState | null {
+  if (!task.teamId || !task.binderId || !task.teamName || !task.binderName) {
+    return null;
+  }
+
+  return {
+    teamId: task.teamId,
+    teamName: task.teamName,
+    binderId: task.binderId,
+    binderName: task.binderName,
+    folderPath: task.folderPath ?? [],
+  };
 }
 
 function uploadedByLine(name: string, createdAt: string): string {
@@ -223,12 +262,8 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     void navigate(`/deliveries/${id}`);
   }, [navigate]);
 
-  const openInFiles = useCallback((target: FilesLocationState | null) => {
-    void navigate('/', { state: target ?? undefined });
-  }, [navigate]);
-
   const visibleJob = selectedJob?.jobId === selectedJobId ? selectedJob : null;
-  const visibleTasks = visibleJob ? tasks : [];
+  const visibleTasks = visibleJob ? tasks.map(displayTask) : [];
 
   if (!selectedJobId) {
     return (
@@ -271,7 +306,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   }
 
   return (
-    <div className="job-dashboard">
+    <div className="job-dashboard job-dashboard--details">
       <div className="dashboard-header">
         <button className="btn" onClick={() => void navigate('/deliveries')}>
           &larr; Delivery audit
@@ -280,7 +315,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         <button
           type="button"
           className="btn"
-          onClick={() => openInFiles(filesStateFromTasks(visibleTasks))}
+          onClick={() => void navigate('/')}
         >
           View in Documents
         </button>
@@ -368,6 +403,13 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
       ) : (
         <ContentReveal>
         <table className="task-table">
+          <colgroup>
+            <col className="task-col-file" />
+            <col className="task-col-destination" />
+            <col className="task-col-status" />
+            <col className="task-col-attempts" />
+            <col className="task-col-details" />
+          </colgroup>
           <thead>
             <tr>
               <th>File</th>
@@ -380,25 +422,25 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           <tbody>
             {visibleTasks.map((t) => (
               <tr key={t.taskId} className={`task-row task-${t.status}`}>
-                <td>{t.fileName ?? t.fileId.slice(0, 8)}</td>
+                <td className="task-file">{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">
                   {t.destination ? (
-                    <button
-                      type="button"
+                    <Link
+                      to="/"
+                      state={documentsLocation(t)}
                       className="task-destination-link"
-                      onClick={() => openInFiles(filesStateFromTask(t))}
                     >
                       {t.destination}
-                    </button>
+                    </Link>
                   ) : (
                     '—'
                   )}
                 </td>
-                <td>
+                <td className="task-status">
                   <span className={statusClass(t.status)}>{statusLabel(t.status)}</span>
                 </td>
-                <td>{t.attemptCount}</td>
-                <td>
+                <td className="task-attempts">{t.attemptCount}</td>
+                <td className="task-details">
                   {t.failureReason && <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>}
                 </td>
               </tr>
