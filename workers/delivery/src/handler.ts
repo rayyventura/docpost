@@ -200,7 +200,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 }
 
 async function failTask(
-  db: ReturnType<typeof getDb>,
+  db: Awaited<ReturnType<typeof getDb>>,
   task: typeof tasks.$inferSelect,
   reason: string,
 ): Promise<void> {
@@ -220,7 +220,7 @@ async function failTask(
 }
 
 async function maybeCompleteJob(
-  db: ReturnType<typeof getDb>,
+  db: Awaited<ReturnType<typeof getDb>>,
   jobId: string,
 ): Promise<void> {
   await db.execute(sql`

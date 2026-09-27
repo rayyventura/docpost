@@ -141,7 +141,7 @@ router.get(
         return;
       }
 
-      Readable.fromWeb(response.body).pipe(res);
+      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream).pipe(res);
     } catch (err) {
       next(err);
     }
