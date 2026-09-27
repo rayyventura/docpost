@@ -4,7 +4,7 @@ import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { FilePicker, fileContentType } from './FilePicker';
 import { DestinationTree } from './DestinationTree';
-import { uploadFiles } from './uploadQueue';
+import { startJobUploads } from './jobUploads';
 import type { SelectedFile, Destination, JobSubmitResponse, SendLocationState } from './types';
 
 function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
@@ -106,37 +106,8 @@ export function NewJobPage() {
           progress: 0,
         };
       });
-      setFiles(updatedFiles);
-
-      const filesToUpload = updatedFiles.filter((f) => f.serverFileId);
-      const { failed } = await uploadFiles(
-        filesToUpload,
-        response.uploads,
-        (fileId, progress) => {
-          setFiles((current) =>
-            current.map((file) => (file.id === fileId ? { ...file, progress } : file)),
-          );
-        },
-        (fileId, status, uploadError) => {
-          setFiles((current) =>
-            current.map((file) =>
-              file.id === fileId
-                ? { ...file, status, error: uploadError, progress: status === 'uploaded' ? 100 : file.progress }
-                : file,
-            ),
-          );
-        },
-      );
-
-      if (failed > 0) {
-        setError(
-          failed === 1
-            ? 'One file failed to upload. Remove it or try sending again.'
-            : `${failed} files failed to upload. Remove them or try sending again.`,
-        );
-        setSubmitting(false);
-        return;
-      }
+      const filesToUpload = updatedFiles.filter((file) => file.serverFileId);
+      startJobUploads(response.jobId, filesToUpload, response.uploads);
 
       setFiles([]);
       setDestinations([]);
@@ -149,20 +120,23 @@ export function NewJobPage() {
           taskCount: response.taskCount,
           createdAt: new Date().toISOString(),
           submitterName: user?.name ?? '',
-          tasks: readyFiles.flatMap((file) =>
-            destinations.map((destination) => ({
-              fileName: file.file.name,
-              teamId: destination.teamId,
-              binderId: destination.binderId,
-              folderId: destination.folderId ?? null,
-              destination: destinationLabel(destination),
-              teamName: destination.teamName,
-              binderName: destination.binderName,
-              folderPath:
-                destination.folderId && destination.folderName
-                  ? [{ id: destination.folderId, name: destination.folderName }]
-                  : [],
-            })),
+          tasks: readyFiles.flatMap((file, fileIndex) =>
+            destinations
+              .filter((destination) => destination.binderId && destination.folderId)
+              .map((destination) => ({
+                fileId: response.uploads[fileIndex]?.fileId ?? '',
+                fileName: file.file.name,
+                teamId: destination.teamId,
+                binderId: destination.binderId,
+                folderId: destination.folderId ?? null,
+                destination: destinationLabel(destination),
+                teamName: destination.teamName,
+                binderName: destination.binderName,
+                folderPath:
+                  destination.folderId && destination.folderName
+                    ? [{ id: destination.folderId, name: destination.folderName }]
+                    : [],
+              })),
           ),
         },
       });
@@ -228,11 +202,7 @@ export function NewJobPage() {
       <div className="job-actions">
         <span className="send-button-wrap" title={disabledReason}>
           <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting
-              ? files.some((file) => file.status === 'uploading')
-                ? 'Uploading...'
-                : 'Sending...'
-              : 'Send'}
+            {submitting ? 'Sending...' : 'Send'}
           </button>
           {disabledReason && <span className="send-tooltip" role="tooltip">{disabledReason}</span>}
         </span>

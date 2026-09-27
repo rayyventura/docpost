@@ -55,6 +55,7 @@ export interface FilesLocationState {
 }
 
 export interface DeliveryTaskSeed {
+  fileId?: string;
   fileName: string;
   teamId: string;
   binderId: string;

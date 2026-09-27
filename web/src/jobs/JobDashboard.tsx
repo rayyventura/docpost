@@ -6,6 +6,7 @@ import { PageLoading } from '../PageLoading';
 import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
+import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
   job: JobSummary | null;
@@ -38,7 +39,7 @@ function deliverySeed(state: unknown, jobId: string | undefined): {
     },
     tasks: (seed.tasks ?? []).map((task, index) => ({
       taskId: `pending-${jobId}-${index}`,
-      fileId: '',
+      fileId: task.fileId ?? '',
       fileName: task.fileName,
       teamId: task.teamId,
       binderId: task.binderId,
@@ -57,6 +58,7 @@ function deliverySeed(state: unknown, jobId: string | undefined): {
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
+  uploading: 'Uploading',
   in_progress: 'In progress',
   completed: 'Completed',
   failed: 'Failed',
@@ -78,7 +80,25 @@ function exhaustedFailureReason(task: TaskDetail): string {
   );
 }
 
+function applyUpload(task: TaskDetail, upload: JobUploadFile | undefined): TaskDetail {
+  if (!upload) return task;
+  if (upload.status === 'uploading') {
+    return { ...task, status: 'uploading', failureReason: null };
+  }
+  if (upload.status === 'error') {
+    return {
+      ...task,
+      status: 'failed',
+      failureReason: upload.error
+        ? `Document could not be uploaded. ${upload.error}`
+        : 'Document could not be uploaded',
+    };
+  }
+  return task;
+}
+
 function displayTask(task: TaskDetail): TaskDetail {
+  if (task.status === 'uploading') return task;
   if (
     (task.status === 'pending' || task.status === 'in_progress') &&
     task.attemptCount >= MAX_ATTEMPTS
@@ -141,6 +161,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(!seed.job && !!selectedJobId);
   const [listLoading, setListLoading] = useState(!selectedJobId);
+  const uploads = useJobUploads(selectedJobId);
 
   // Load job list
   useEffect(() => {
@@ -263,7 +284,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   }, [navigate]);
 
   const visibleJob = selectedJob?.jobId === selectedJobId ? selectedJob : null;
-  const visibleTasks = visibleJob ? tasks.map(displayTask) : [];
+  const uploading = Object.values(uploads).some((upload) => upload.status === 'uploading');
+  const visibleTasks = visibleJob
+    ? tasks.map((task) => displayTask(applyUpload(task, uploadForTask(task, uploads))))
+    : [];
+  const visibleStatus = uploading ? 'uploading' : visibleJob?.aggregateStatus;
 
   if (!selectedJobId) {
     return (
@@ -329,8 +354,8 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
       {visibleJob && (
         <div className="job-summary">
           <div className="summary-row">
-            <span className={statusClass(visibleJob.aggregateStatus)}>
-              {statusLabel(visibleJob.aggregateStatus)}
+            <span className={statusClass(visibleStatus ?? visibleJob.aggregateStatus)}>
+              {statusLabel(visibleStatus ?? visibleJob.aggregateStatus)}
             </span>
             <span>{visibleJob.taskCount} total items</span>
             <span className="job-item-meta">
@@ -420,7 +445,9 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             </tr>
           </thead>
           <tbody>
-            {visibleTasks.map((t) => (
+            {visibleTasks.map((t) => {
+              const upload = uploadForTask(t, uploads);
+              return (
               <tr key={t.taskId} className={`task-row task-${t.status}`}>
                 <td className="task-file">{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">
@@ -441,10 +468,20 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
                 </td>
                 <td className="task-attempts">{t.attemptCount}</td>
                 <td className="task-details">
-                  {t.failureReason && <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>}
+                  {t.status === 'uploading' && upload ? (
+                    <div className="task-upload-progress">
+                      <div className="progress-bar task-progress-bar">
+                        <div className="progress-fill" style={{ width: `${upload.progress}%` }} />
+                      </div>
+                      <span className="task-upload-progress-label">{upload.progress}%</span>
+                    </div>
+                  ) : t.failureReason ? (
+                    <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>
+                  ) : null}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         </ContentReveal>
