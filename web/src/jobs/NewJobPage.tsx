@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { FilePicker } from './FilePicker';
+import { FilePicker, fileContentType } from './FilePicker';
 import { DestinationTree } from './DestinationTree';
 import { uploadFiles } from './uploadQueue';
 import type { SelectedFile, Destination, JobSubmitResponse, SendLocationState } from './types';
@@ -30,7 +30,7 @@ export function NewJobPage() {
 
   useEffect(() => {
     const seed = location.state as SendLocationState | null;
-    if (!seed?.destination?.binderId) return;
+    if (!seed?.destination?.binderId || !seed.destination.folderId) return;
 
     setDestinations((current) => {
       if (current.some((destination) => destKey(destination) === destKey(seed.destination))) {
@@ -75,18 +75,18 @@ export function NewJobPage() {
       const filePayload = readyFiles.map((f) => ({
         name: f.file.name,
         sizeBytes: f.file.size,
-        contentType: f.file.type,
+        contentType: fileContentType(f.file),
         sha256: f.sha256,
       }));
 
       const mappingPayload = readyFiles.map((_, i) => ({
         fileIndex: i,
         destinations: destinations
-          .filter((d) => d.binderId)
+          .filter((d) => d.binderId && d.folderId)
           .map((d) => ({
             teamId: d.teamId,
             binderId: d.binderId,
-            folderId: d.folderId ?? null,
+            folderId: d.folderId,
           })),
       }));
 
@@ -195,6 +195,7 @@ export function NewJobPage() {
             onFilesAdded={handleFilesAdded}
             onFileRemoved={handleFileRemoved}
             disabled={submitting}
+            pageDrop={location.pathname === '/send'}
           />
         </div>
       </div>

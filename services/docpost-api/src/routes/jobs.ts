@@ -7,6 +7,7 @@ import { jobs, files, tasks } from '../db/schema.js';
 import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
 import { destinationPaths, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
+import { reconcileExhaustedTasks } from '../lib/reconcile.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
 
 const router = Router();
@@ -26,7 +27,7 @@ const ALLOWED_CONTENT_TYPES = [
 const destinationSchema = z.object({
   teamId: z.string().uuid(),
   binderId: z.string().uuid(),
-  folderId: z.string().uuid().nullable().optional(),
+  folderId: z.string().uuid(),
 });
 
 const fileSchema = z.object({
@@ -135,7 +136,7 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
             fileId: fileRow.id,
             teamId: dest.teamId,
             binderId: dest.binderId,
-            folderId: dest.folderId ?? null,
+            folderId: dest.folderId,
             region: 'us-east-1',
           });
         }
@@ -260,6 +261,13 @@ router.get('/jobs/:id', requireUserAuth, async (req: Request, res: Response, nex
       throw new NotFoundError('Job not found');
     }
 
+    await reconcileExhaustedTasks(db, job.id);
+
+    const [updatedJob] = await db
+      .select({ completedAt: jobs.completedAt })
+      .from(jobs)
+      .where(eq(jobs.id, job.id));
+
     const taskCounts = await db
       .select({
         status: tasks.status,
@@ -278,7 +286,7 @@ router.get('/jobs/:id', requireUserAuth, async (req: Request, res: Response, nex
       jobId: job.id,
       createdAt: job.createdAt,
       taskCount: job.taskCount,
-      completedAt: job.completedAt,
+      completedAt: updatedJob?.completedAt ?? job.completedAt,
       submitterName: job.submitterName ?? 'Unknown',
       counts,
       aggregateStatus: computeAggregateStatus(counts),
@@ -308,6 +316,8 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
     if (!submitterIds.has(job.submittedByUserId)) {
       throw new NotFoundError('Job not found');
     }
+
+    await reconcileExhaustedTasks(db, job.id);
 
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 100));

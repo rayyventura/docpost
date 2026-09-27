@@ -120,7 +120,15 @@ export function DestinationsPage() {
   const isBinderContents = current.level === 'contents' && !current.folderId;
 
   const sendTarget = useMemo((): SendLocationState | null => {
-    if (current.level !== 'contents' || !current.teamId || !current.binderId || !current.teamName || !current.binderName) {
+    if (
+      current.level !== 'contents' ||
+      !current.folderId ||
+      !current.folderName ||
+      !current.teamId ||
+      !current.binderId ||
+      !current.teamName ||
+      !current.binderName
+    ) {
       return null;
     }
 
@@ -129,9 +137,8 @@ export function DestinationsPage() {
       teamName: current.teamName,
       binderId: current.binderId,
       binderName: current.binderName,
-      ...(current.folderId && current.folderName
-        ? { folderId: current.folderId, folderName: current.folderName }
-        : {}),
+      folderId: current.folderId,
+      folderName: current.folderName,
     };
 
     const folderPath = breadcrumb

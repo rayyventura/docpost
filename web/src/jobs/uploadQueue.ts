@@ -1,4 +1,5 @@
 import { apiRequest } from '../api/client';
+import { fileContentType } from './FilePicker';
 import type { SelectedFile, JobSubmitResponse } from './types';
 
 const CONCURRENCY = 5;
@@ -80,7 +81,7 @@ async function uploadSingleFile(
     xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
 
     xhr.open('PUT', presignedUrl);
-    xhr.setRequestHeader('Content-Type', sf.file.type);
+    xhr.setRequestHeader('Content-Type', fileContentType(sf.file));
     xhr.send(sf.file);
   });
 }

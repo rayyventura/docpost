@@ -1,7 +1,7 @@
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
-import { eq, and, sql, gte, lt } from 'drizzle-orm';
+import { eq, and, sql, gte, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
 
@@ -170,17 +170,11 @@ function maxAttempts(): number {
   return Number(env('MAX_RECEIVE_COUNT', '3'));
 }
 
-function staleAfterMs(): number {
-  return Number(env('IN_PROGRESS_STALE_MS', '90000'));
-}
-
 async function failExhaustedTasks(
   db: Awaited<ReturnType<typeof getDb>>,
   jobId: string,
   now: Date,
 ): Promise<void> {
-  const staleBefore = new Date(now.getTime() - staleAfterMs());
-
   const stuck = await db
     .select({
       id: tasks.id,
@@ -192,9 +186,8 @@ async function failExhaustedTasks(
     .where(
       and(
         eq(tasks.jobId, jobId),
-        eq(tasks.status, 'in_progress'),
+        inArray(tasks.status, ['pending', 'in_progress']),
         gte(tasks.attemptCount, maxAttempts()),
-        lt(tasks.updatedAt, staleBefore),
       ),
     );
 
@@ -212,7 +205,7 @@ async function failExhaustedTasks(
         failureReason: reason,
         updatedAt: now,
       })
-      .where(and(eq(tasks.id, task.id), eq(tasks.status, 'in_progress')))
+      .where(and(eq(tasks.id, task.id), inArray(tasks.status, ['pending', 'in_progress'])))
       .returning({ id: tasks.id });
 
     if (failed) {

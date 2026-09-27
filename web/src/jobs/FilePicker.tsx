@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SelectedFile } from './types';
 import { computeSha256 } from './useFileHash';
 
@@ -10,18 +10,50 @@ const ALLOWED_TYPES = [
   'image/png',
   'image/jpeg',
 ];
+const TYPE_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+};
 const ALLOWED_EXTENSIONS = '.pdf,.docx,.xlsx,.png,.jpg,.jpeg';
 const MAX_SIZE = 1_073_741_824; // 1 GB
+
+export function fileContentType(file: File): string {
+  if (ALLOWED_TYPES.includes(file.type)) return file.type;
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  return TYPE_BY_EXT[ext] ?? '';
+}
+
+function isFileDrag(event: { dataTransfer?: DataTransfer | null }): boolean {
+  const transfer = event.dataTransfer;
+  if (!transfer) return false;
+  const types = transfer.types;
+  for (let i = 0; i < types.length; i++) {
+    const type = types[i];
+    if (type === 'Files' || type === 'application/x-moz-file') return true;
+  }
+  if (transfer.items) {
+    for (let i = 0; i < transfer.items.length; i++) {
+      if (transfer.items[i].kind === 'file') return true;
+    }
+  }
+  return types.length === 0;
+}
 
 interface FilePickerProps {
   files: SelectedFile[];
   onFilesAdded: (files: SelectedFile[]) => void;
   onFileRemoved: (id: string) => void;
   disabled?: boolean;
+  pageDrop?: boolean;
 }
 
-export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: FilePickerProps) {
+export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageDrop }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const handleFiles = useCallback(
     async (fileList: FileList) => {
@@ -30,7 +62,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
 
       const newFiles: SelectedFile[] = selected
         .filter((f) => {
-          if (!ALLOWED_TYPES.includes(f.type)) return false;
+          if (!fileContentType(f)) return false;
           if (f.size > MAX_SIZE || f.size === 0) return false;
           return true;
         })
@@ -75,18 +107,75 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      if (e.dataTransfer.files) {
-        handleFiles(e.dataTransfer.files);
+      e.stopPropagation();
+      setDragOver(false);
+      if (disabled) return;
+      if (e.dataTransfer.files.length > 0) {
+        void handleFiles(e.dataTransfer.files);
       }
     },
-    [handleFiles],
+    [disabled, handleFiles],
   );
 
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!disabled) setDragOver(true);
+  }, [disabled]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
+  }, [disabled]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  }, []);
+
+  useEffect(() => {
+    if (!pageDrop || disabled) return;
+
+    const onDragOver = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      setDragOver(true);
+    };
+    const onDragLeave = (event: DragEvent) => {
+      if (event.relatedTarget) return;
+      setDragOver(false);
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      setDragOver(false);
+      if (event.dataTransfer?.files.length) {
+        void handleFiles(event.dataTransfer.files);
+      }
+    };
+
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [pageDrop, disabled, handleFiles]);
+
   return (
-    <div className="file-picker">
+    <div className={`file-picker${dragOver ? ' file-picker--receiving' : ''}`}>
       <div
-        className="drop-zone"
-        onDragOver={(e) => e.preventDefault()}
+        className={`drop-zone${dragOver ? ' drop-zone--active' : ''}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !disabled && inputRef.current?.click()}
       >
@@ -99,7 +188,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled }: Fil
           hidden
           disabled={disabled}
         />
-        <p>Drop files here or click to browse</p>
+        <p>{dragOver ? 'Drop to add' : 'Drop files here or click to browse'}</p>
         <p className="drop-zone-hint">
           PDF, DOCX, XLSX, PNG, JPG. Up to 1 GB each. {MAX_FILES - files.length} remaining
         </p>

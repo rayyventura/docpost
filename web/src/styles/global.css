@@ -769,6 +769,19 @@ body {
   background: var(--color-accent-subtle);
 }
 
+.drop-zone--active,
+.file-picker--receiving .drop-zone {
+  border-color: var(--color-primary);
+  border-style: solid;
+  background: var(--color-primary-subtle);
+  box-shadow: 0 0 0 3px rgba(41, 37, 36, 0.08);
+}
+
+.drop-zone--active p:first-of-type,
+.file-picker--receiving .drop-zone p:first-of-type {
+  color: var(--color-primary);
+}
+
 .drop-zone p {
   color: var(--color-text-secondary);
   font-size: 0.8125rem;
@@ -1169,7 +1182,8 @@ body {
   letter-spacing: -0.01em;
 }
 
-.tree-team-name {
+.tree-team-name,
+.tree-binder-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1180,11 +1194,22 @@ body {
   padding: 0;
   text-align: left;
   font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tree-team-name {
   font-weight: 600;
   font-size: 0.875rem;
   letter-spacing: -0.01em;
-  color: inherit;
+}
+
+.tree-row-binder {
   cursor: pointer;
+}
+
+.tree-binder-name {
+  font-weight: 500;
 }
 
 .tree-loading,
@@ -1339,6 +1364,11 @@ body {
   padding-top: 0.5rem;
 }
 
+.job-dashboard--details {
+  max-width: 100%;
+  width: 100%;
+}
+
 .dashboard-header {
   display: flex;
   align-items: center;
@@ -1422,6 +1452,7 @@ body {
   border-radius: 99px;
   text-transform: capitalize;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .status-pending {
@@ -1529,6 +1560,7 @@ body {
 
 .task-table {
   width: 100%;
+  table-layout: auto;
   border-collapse: collapse;
   font-size: 0.8125rem;
   background: var(--color-surface);
@@ -1537,11 +1569,30 @@ body {
   overflow: hidden;
 }
 
+.task-col-file {
+  width: 28%;
+}
+
+.task-col-destination {
+  width: 36%;
+}
+
+.task-col-status,
+.task-col-attempts {
+  width: 1%;
+}
+
+.task-col-details {
+  width: 22%;
+  max-width: 30%;
+}
+
 .task-table th,
 .task-table td {
   padding: 0.5rem 0.75rem;
   text-align: left;
   border-bottom: 1px solid var(--color-border-light);
+  vertical-align: top;
 }
 
 .task-table th {
@@ -1553,29 +1604,42 @@ body {
   color: var(--color-text-secondary);
 }
 
+.task-file {
+  overflow-wrap: break-word;
+}
+
 .task-destination {
   color: var(--color-text-secondary);
   font-size: 0.75rem;
-  max-width: 28rem;
+}
+
+.task-status,
+.task-attempts {
+  white-space: nowrap;
+}
+
+.task-details {
+  max-width: 30%;
 }
 
 .task-destination-link {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--color-accent);
-  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
-  text-align: left;
 }
 
 .task-destination-link:hover {
-  text-decoration: underline;
+  color: var(--color-text);
 }
 
 .failure-reason {
+  display: block;
+  max-width: 100%;
   color: var(--color-error);
   font-size: 0.75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .doc-id {
