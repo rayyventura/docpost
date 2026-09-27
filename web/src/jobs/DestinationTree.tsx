@@ -269,6 +269,8 @@ export function DestinationTree({ selected, onChange }: DestinationTreeProps) {
 
   const toggleDestination = useCallback(
     (dest: Destination) => {
+      if (!dest.binderId) return;
+
       const key = destKey(dest);
       if (selected.some((s) => destKey(s) === key)) {
         onChange(selected.filter((s) => destKey(s) !== key));

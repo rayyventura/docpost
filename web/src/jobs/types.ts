@@ -1,8 +1,8 @@
 export interface Destination {
   teamId: string;
   teamName: string;
-  binderId?: string;
-  binderName?: string;
+  binderId: string;
+  binderName: string;
   folderId?: string;
   folderName?: string;
 }
