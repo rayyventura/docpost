@@ -27,6 +27,29 @@ export function fileContentType(file: File): string {
   return TYPE_BY_EXT[ext] ?? '';
 }
 
+function captureFile(file: File): File {
+  const type = fileContentType(file) || file.type;
+  return new File([file], file.name, { type, lastModified: file.lastModified });
+}
+
+function filesFromTransfer(transfer: DataTransfer): File[] {
+  const captured = new Map<string, File>();
+  const add = (file: File | null) => {
+    if (!file) return;
+    const kept = captureFile(file);
+    captured.set(`${kept.name}:${kept.size}:${kept.lastModified}`, kept);
+  };
+
+  for (const file of Array.from(transfer.files)) {
+    add(file);
+  }
+  for (let i = 0; i < transfer.items.length; i++) {
+    const item = transfer.items[i];
+    if (item.kind === 'file') add(item.getAsFile());
+  }
+  return [...captured.values()];
+}
+
 function isFileDrag(event: { dataTransfer?: DataTransfer | null }): boolean {
   const transfer = event.dataTransfer;
   if (!transfer) return false;
@@ -54,18 +77,25 @@ interface FilePickerProps {
 export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageDrop }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [pickError, setPickError] = useState<string | null>(null);
 
   const handleFiles = useCallback(
-    async (fileList: FileList) => {
+    async (incoming: File[]) => {
       const remaining = MAX_FILES - files.length;
-      const selected = Array.from(fileList).slice(0, remaining);
+      const selected = incoming.slice(0, remaining);
+      const tooLarge = incoming.filter((f) => f.size > MAX_SIZE);
+      const skippedType = incoming.filter((f) => f.size <= MAX_SIZE && !fileContentType(f)).length;
+
+      if (tooLarge.length === 1) {
+        setPickError(`${tooLarge[0].name} is larger than 1 GB and cannot be sent.`);
+      } else if (tooLarge.length > 1) {
+        setPickError(`${tooLarge.length} files are larger than 1 GB and cannot be sent.`);
+      } else {
+        setPickError(null);
+      }
 
       const newFiles: SelectedFile[] = selected
-        .filter((f) => {
-          if (!fileContentType(f)) return false;
-          if (f.size > MAX_SIZE || f.size === 0) return false;
-          return true;
-        })
+        .filter((f) => fileContentType(f) && f.size > 0 && f.size <= MAX_SIZE)
         .map((f) => ({
           id: crypto.randomUUID(),
           file: f,
@@ -74,7 +104,13 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
           progress: 0,
         }));
 
-      if (newFiles.length === 0) return;
+      if (newFiles.length === 0) {
+        if (tooLarge.length === 0 && skippedType > 0) {
+          setPickError('Use PDF, DOCX, XLSX, PNG, or JPG.');
+        }
+        return;
+      }
+
       onFilesAdded(newFiles);
 
       // Compute hashes in background
@@ -97,7 +133,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files) {
-        handleFiles(e.target.files);
+        void handleFiles(Array.from(e.target.files).map(captureFile));
         e.target.value = '';
       }
     },
@@ -110,8 +146,9 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
       e.stopPropagation();
       setDragOver(false);
       if (disabled) return;
-      if (e.dataTransfer.files.length > 0) {
-        void handleFiles(e.dataTransfer.files);
+      const dropped = filesFromTransfer(e.dataTransfer);
+      if (dropped.length > 0) {
+        void handleFiles(dropped);
       }
     },
     [disabled, handleFiles],
@@ -154,8 +191,9 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
       if (!isFileDrag(event)) return;
       event.preventDefault();
       setDragOver(false);
-      if (event.dataTransfer?.files.length) {
-        void handleFiles(event.dataTransfer.files);
+      const dropped = event.dataTransfer ? filesFromTransfer(event.dataTransfer) : [];
+      if (dropped.length > 0) {
+        void handleFiles(dropped);
       }
     };
 
@@ -193,6 +231,11 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
           PDF, DOCX, XLSX, PNG, JPG. Up to 1 GB each. {MAX_FILES - files.length} remaining
         </p>
       </div>
+      {pickError && (
+        <div className="error-banner" role="alert">
+          {pickError}
+        </div>
+      )}
 
       {files.length > 0 && (
         <ul className="file-list">
