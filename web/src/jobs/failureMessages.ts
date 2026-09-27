@@ -10,11 +10,14 @@ const messages: Record<string, string> = {
   SIZE_MISMATCH:
     '{fileName} could not be delivered because the uploaded size was {actualSize} bytes instead of {declaredSize}',
   RETRIES_EXHAUSTED:
-    '{fileName} could not be delivered after repeated attempts',
+    '{fileName} could not be delivered after repeated attempts. {reason}',
 };
 
 export function formatFailureReason(raw: string): string {
   const parsed = parseFailureReason(raw);
+  if (parsed.code === 'RETRIES_EXHAUSTED' && !parsed.values.reason) {
+    parsed.values.reason = 'the delivery worker stopped after the maximum number of retries';
+  }
   const template = messages[parsed.code];
   if (!template) return raw;
 

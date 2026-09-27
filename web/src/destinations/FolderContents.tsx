@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiDownload, apiRequest } from '../api/client';
+import { ContentReveal } from '../ContentReveal';
+import { PageLoading } from '../PageLoading';
 import { formatDate } from '../formatDate';
 
 interface Folder {
@@ -76,6 +78,8 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
     let cancelled = false;
 
     async function fetchContents() {
+      setLoading(true);
+      setError('');
       const path = type === 'binder'
         ? `/destinations/binders/${id}/contents`
         : `/destinations/folders/${id}/contents`;
@@ -101,7 +105,7 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   }, [id, type]);
 
   if (loading) {
-    return <div className="loading-spinner" aria-label="Loading contents" />;
+    return <PageLoading label="Loading contents" />;
   }
 
   if (error) {
@@ -115,11 +119,15 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   const isEmpty = contents.folders.length === 0 && contents.documents.length === 0;
 
   if (isEmpty) {
-    return <p className="empty-state">Nothing has been sent here yet.</p>;
+    return (
+      <ContentReveal>
+        <p className="empty-state">Nothing has been sent here yet.</p>
+      </ContentReveal>
+    );
   }
 
   return (
-    <div className="folder-contents">
+    <ContentReveal className="folder-contents">
       {downloadError && <div className="error-banner">{downloadError}</div>}
       {contents.folders.length > 0 && (
         <section>
@@ -172,6 +180,6 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
           </ul>
         </section>
       )}
-    </div>
+    </ContentReveal>
   );
 }

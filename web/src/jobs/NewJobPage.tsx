@@ -1,13 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { FilePicker } from './FilePicker';
 import { DestinationTree } from './DestinationTree';
 import { uploadFiles } from './uploadQueue';
-import type { SelectedFile, Destination, DeliveryLocationState, JobSubmitResponse } from './types';
+import type { SelectedFile, Destination, JobSubmitResponse, SendLocationState } from './types';
 
-interface NewJobPageProps {
-  onJobCreated: (created: DeliveryLocationState) => void;
+function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
+  return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
 }
 
 function destinationLabel(destination: Destination): string {
@@ -16,13 +17,29 @@ function destinationLabel(destination: Destination): string {
     .join(' / ');
 }
 
-export function NewJobPage({ onJobCreated }: NewJobPageProps) {
+export function NewJobPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [revealFolderPath, setRevealFolderPath] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
+
+  useEffect(() => {
+    const seed = location.state as SendLocationState | null;
+    if (!seed?.destination?.binderId) return;
+
+    setDestinations((current) => {
+      if (current.some((destination) => destKey(destination) === destKey(seed.destination))) {
+        return current;
+      }
+      return [...current, seed.destination];
+    });
+    setRevealFolderPath(seed.folderPath ?? []);
+  }, [location.key, location.state]);
 
   const handleFilesAdded = useCallback((newFiles: SelectedFile[]) => {
     if (newFiles.length > 0) {
@@ -126,33 +143,40 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
       setError(null);
       setSubmitting(false);
       setFormKey((key) => key + 1);
-      onJobCreated({
-        jobId: response.jobId,
-        taskCount: response.taskCount,
-        createdAt: new Date().toISOString(),
-        submitterName: user?.name ?? '',
-        tasks: readyFiles.flatMap((file) =>
-          destinations.map((destination) => ({
-            fileName: file.file.name,
-            teamId: destination.teamId,
-            binderId: destination.binderId,
-            folderId: destination.folderId ?? null,
-            destination: destinationLabel(destination),
-          })),
-        ),
+      void navigate(`/deliveries/${response.jobId}`, {
+        state: {
+          jobId: response.jobId,
+          taskCount: response.taskCount,
+          createdAt: new Date().toISOString(),
+          submitterName: user?.name ?? '',
+          tasks: readyFiles.flatMap((file) =>
+            destinations.map((destination) => ({
+              fileName: file.file.name,
+              teamId: destination.teamId,
+              binderId: destination.binderId,
+              folderId: destination.folderId ?? null,
+              destination: destinationLabel(destination),
+            })),
+          ),
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed');
       setSubmitting(false);
     }
-  }, [readyFiles, destinations, files, onJobCreated, user?.name]);
+  }, [readyFiles, destinations, files, navigate, user?.name]);
 
   return (
     <div className="new-job-page">
-      <p className="page-lead">Choose where each file should be filed, then send it. You will download it later from Files.</p>
+      <p className="page-lead">Choose where each file should be placed in the destination hierarchy. After send, it lives there.</p>
       <div className="distribute-panels">
         <div className={`panel-left ${submitting ? 'panel-left--locked' : ''}`}>
-          <DestinationTree key={formKey} selected={destinations} onChange={setDestinations} />
+          <DestinationTree
+            key={formKey}
+            selected={destinations}
+            onChange={setDestinations}
+            revealFolderPath={revealFolderPath}
+          />
         </div>
         <div className="panel-right">
           <div className="panel-right-header">To send</div>

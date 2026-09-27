@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
+import { ContentReveal } from '../ContentReveal';
+import { PageLoading } from '../PageLoading';
 import type { DeliveryLocationState, JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
-
-interface JobDashboardProps {
-  onOpenFiles?: () => void;
-}
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
   job: JobSummary | null;
@@ -82,10 +80,14 @@ function aggregateStatus(counts: JobSummary['counts']): string {
   return 'in_progress';
 }
 
-export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
+export function JobDashboard() {
+  const { id } = useParams<{ id: string }>();
+  return <JobDashboardView key={id ?? 'list'} jobId={id} />;
+}
+
+function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { jobId } = useParams<{ jobId: string }>();
   const selectedJobId = jobId ?? null;
   const seed = deliverySeed(location.state, selectedJobId ?? undefined);
   const [jobs, setJobs] = useState<JobSummary[]>([]);
@@ -95,12 +97,26 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
   const [taskPage, setTaskPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(!seed.job && !!selectedJobId);
+  const [listLoading, setListLoading] = useState(!selectedJobId);
 
   // Load job list
   useEffect(() => {
-    if (!selectedJobId) {
-      apiRequest<{ jobs: JobSummary[] }>('/jobs').then((data) => setJobs(data.jobs)).catch(console.error);
-    }
+    if (selectedJobId) return;
+
+    let cancelled = false;
+    setListLoading(true);
+    apiRequest<{ jobs: JobSummary[] }>('/jobs')
+      .then((data) => {
+        if (!cancelled) setJobs(data.jobs);
+      })
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) setListLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedJobId]);
 
   // Load selected job details and tasks
@@ -209,10 +225,15 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
-        <p className="page-lead">A record of each send. Download the files from Files, in the folder they were sent to.</p>
-        {jobs.length === 0 ? (
-          <p className="empty-state">Nothing has been sent yet. Use Send to file documents into a team.</p>
+        <p className="page-lead">An audit of each send: who filed what, where it was placed, and whether it completed. The documents themselves are in Files.</p>
+        {listLoading ? (
+          <PageLoading label="Loading deliveries" />
+        ) : jobs.length === 0 ? (
+          <ContentReveal>
+            <p className="empty-state">Nothing has been sent yet. Use Send to place documents in a destination.</p>
+          </ContentReveal>
         ) : (
+          <ContentReveal>
           <ul className="job-list">
             {jobs.map((j) => (
               <li key={j.jobId} className="job-item" onClick={() => handleSelectJob(j.jobId)}>
@@ -231,6 +252,7 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
               </li>
             ))}
           </ul>
+          </ContentReveal>
         )}
       </div>
     );
@@ -243,13 +265,11 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
           &larr; All Deliveries
         </button>
         <h2>Delivery Details</h2>
-        {onOpenFiles && (
-          <button type="button" className="btn" onClick={onOpenFiles}>
-            Open Files
-          </button>
-        )}
+        <button type="button" className="btn" onClick={() => void navigate('/')}>
+          View in Files
+        </button>
       </div>
-      <p className="page-lead">This is the record of the send. When a file is finished, download it from Files in the destination shown below.</p>
+      <p className="page-lead">Audit record for this send. The file itself is stored in the destination listed below.</p>
 
       {visibleJob && (
         <div className="job-summary">
@@ -324,8 +344,9 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
       </div>
 
       {loading && visibleTasks.length === 0 ? (
-        <p className="loading">Loading...</p>
+        <PageLoading label="Loading delivery details" />
       ) : (
+        <ContentReveal>
         <table className="task-table">
           <thead>
             <tr>
@@ -352,6 +373,7 @@ export function JobDashboard({ onOpenFiles }: JobDashboardProps) {
             ))}
           </tbody>
         </table>
+        </ContentReveal>
       )}
 
       {taskTotal > 100 && (
