@@ -36,6 +36,22 @@ export interface JobSubmitResponse {
   }>;
 }
 
+export interface DeliveryTaskSeed {
+  fileName: string;
+  teamId: string;
+  binderId: string;
+  folderId: string | null;
+  destination: string;
+}
+
+export interface DeliveryLocationState {
+  jobId: string;
+  taskCount: number;
+  createdAt: string;
+  submitterName: string;
+  tasks: DeliveryTaskSeed[];
+}
+
 export interface JobSummary {
   jobId: string;
   createdAt: string;
