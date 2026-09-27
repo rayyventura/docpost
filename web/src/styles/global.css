@@ -394,6 +394,43 @@ body {
   }
 }
 
+.loading-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 24px;
+}
+
+.loading-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: loading-dot 1s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes loading-dot {
+  0%,
+  70%,
+  100% {
+    opacity: 0.22;
+    transform: scale(0.8);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .content-reveal {
   animation: contentPop 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -799,6 +836,12 @@ body {
   font-weight: 400 !important;
 }
 
+.drop-zone-error {
+  margin-top: 0.5rem;
+  color: var(--color-error);
+  font-size: 0.75rem !important;
+}
+
 .file-list {
   list-style: none;
   margin-top: 0.75rem;
@@ -998,6 +1041,11 @@ body {
 .panel-right .file-picker:has(.file-list) .drop-zone {
   min-height: 6.5rem;
   padding: 1.25rem 1.5rem;
+}
+
+.file-picker .error-banner {
+  margin: 0.75rem 0 0;
+  flex-shrink: 0;
 }
 
 .panel-right .file-list {
