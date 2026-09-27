@@ -450,6 +450,37 @@ resource "aws_iam_role_policy" "github_terraform" {
         }
       },
       {
+        # Customer-managed policies created by the teardown stack (API and
+        # worker runtime). CreatePolicy is authorized against the policy ARN.
+        Sid    = "IamCustomerPolicies"
+        Effect = "Allow"
+        Action = [
+          "iam:CreatePolicy",
+          "iam:CreatePolicyVersion",
+          "iam:DeletePolicy",
+          "iam:DeletePolicyVersion",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:ListPolicyTags",
+          "iam:ListPolicyVersions",
+          "iam:SetDefaultPolicyVersion",
+          "iam:TagPolicy",
+          "iam:UntagPolicy",
+        ]
+        Resource = "arn:aws:iam::${local.account_id}:policy/${local.name_prefix}-*"
+      },
+      {
+        Sid      = "IamAttachCustomerPolicies"
+        Effect   = "Allow"
+        Action   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        Resource = "arn:aws:iam::${local.account_id}:role/${local.name_prefix}-*"
+        Condition = {
+          StringLike = {
+            "iam:PolicyARN" = "arn:aws:iam::${local.account_id}:policy/${local.name_prefix}-*"
+          }
+        }
+      },
+      {
         Sid      = "IamPassRole"
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
