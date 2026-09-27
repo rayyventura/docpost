@@ -182,7 +182,8 @@ module "alb" {
       name              = "auth"
       port              = 3000
       health_check_path = "/health"
-      path_patterns     = ["/auth/*"]
+      # /.well-known/* serves the JWKS that other services verify tokens with.
+      path_patterns     = ["/auth/*", "/.well-known/*"]
       priority          = 100
     },
     {
@@ -271,8 +272,9 @@ module "ecs_platform" {
   }
 
   environment_variables = {
-    NODE_ENV = var.environment
-    PORT     = "3000"
+    NODE_ENV      = var.environment
+    PORT          = "3000"
+    AUTH_JWKS_URL = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
   }
 }
 
@@ -307,8 +309,10 @@ module "ecs_docpost_api" {
   }
 
   environment_variables = {
-    NODE_ENV = var.environment
-    PORT     = "3000"
+    NODE_ENV      = var.environment
+    PORT          = "3000"
+    AUTH_JWKS_URL = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
+    PLATFORM_URL  = "http://${module.alb.alb_dns_name}"
   }
 }
 
