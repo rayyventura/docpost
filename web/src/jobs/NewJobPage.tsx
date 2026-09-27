@@ -156,6 +156,12 @@ export function NewJobPage() {
               binderId: destination.binderId,
               folderId: destination.folderId ?? null,
               destination: destinationLabel(destination),
+              teamName: destination.teamName,
+              binderName: destination.binderName,
+              folderPath:
+                destination.folderId && destination.folderName
+                  ? [{ id: destination.folderId, name: destination.folderName }]
+                  : [],
             })),
           ),
         },

@@ -437,10 +437,12 @@ body {
 .breadcrumb {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.25rem;
   margin-bottom: 1.25rem;
   font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow-x: auto;
 }
 
 .breadcrumb-separator {
@@ -526,7 +528,8 @@ body {
   flex-shrink: 0;
 }
 
-.item-icon--binder {
+.item-icon--binder,
+.item-icon--team {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -535,7 +538,8 @@ body {
   color: var(--color-accent);
 }
 
-.binder-icon {
+.binder-icon,
+.team-icon {
   display: block;
   width: 1.5rem;
   height: 1.5rem;
@@ -643,10 +647,15 @@ body {
 
 .page-lead {
   margin: 0 0 1rem;
-  max-width: 42rem;
   color: var(--color-text-secondary);
   font-size: 0.875rem;
   line-height: 1.45;
+}
+
+.page-lead--single {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ===== Tab Panels ===== */
@@ -1548,6 +1557,20 @@ body {
   color: var(--color-text-secondary);
   font-size: 0.75rem;
   max-width: 28rem;
+}
+
+.task-destination-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-destination-link:hover {
+  text-decoration: underline;
 }
 
 .failure-reason {

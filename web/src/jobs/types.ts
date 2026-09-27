@@ -41,12 +41,28 @@ export interface JobSubmitResponse {
   }>;
 }
 
+export interface FolderPathSegment {
+  id: string;
+  name: string;
+}
+
+export interface FilesLocationState {
+  teamId: string;
+  teamName: string;
+  binderId: string;
+  binderName: string;
+  folderPath?: FolderPathSegment[];
+}
+
 export interface DeliveryTaskSeed {
   fileName: string;
   teamId: string;
   binderId: string;
   folderId: string | null;
   destination: string;
+  teamName?: string;
+  binderName?: string;
+  folderPath?: FolderPathSegment[];
 }
 
 export interface DeliveryLocationState {
@@ -80,6 +96,9 @@ export interface TaskDetail {
   binderId: string;
   folderId: string | null;
   destination: string | null;
+  teamName?: string | null;
+  binderName?: string | null;
+  folderPath?: FolderPathSegment[];
   status: string;
   attemptCount: number;
   failureReason: string | null;

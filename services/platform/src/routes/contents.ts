@@ -204,24 +204,29 @@ router.post(
       }
 
       const destinations = items.map((item: { teamId: string; binderId: string; folderId?: string | null }) => {
-        const folderChain: string[] = [];
+        const folderPath: Array<{ id: string; name: string }> = [];
         let current = item.folderId ?? null;
         const guard = new Set<string>();
         while (current && !guard.has(current)) {
           guard.add(current);
           const node = folderInfo.get(current);
           if (!node) break;
-          folderChain.unshift(node.name);
+          folderPath.unshift({ id: current, name: node.name });
           current = node.parentFolderId;
         }
-        const path = [teamNames.get(item.teamId), binderNames.get(item.binderId), ...folderChain]
-          .filter((part): part is string => Boolean(part))
+        const teamName = teamNames.get(item.teamId) ?? '';
+        const binderName = binderNames.get(item.binderId) ?? '';
+        const path = [teamName, binderName, ...folderPath.map((folder) => folder.name)]
+          .filter(Boolean)
           .join(' / ');
         return {
           teamId: item.teamId,
           binderId: item.binderId,
           folderId: item.folderId ?? null,
           path,
+          teamName,
+          binderName,
+          folderPath,
         };
       });
 

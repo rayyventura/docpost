@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
+import { TeamIcon } from './TeamIcon';
 
 interface Team {
   id: string;
@@ -66,7 +67,9 @@ export function TeamList({ onSelect }: TeamListProps) {
             className="item-card"
             onClick={() => onSelect(team.id, team.name)}
           >
-            <span className="item-icon" aria-hidden="true">&#x1F465;</span>
+            <span className="item-icon item-icon--team" aria-hidden="true">
+              <TeamIcon />
+            </span>
             <div className="item-info">
               <span className="item-name">{team.name}</span>
             </div>

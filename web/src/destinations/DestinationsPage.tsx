@@ -1,9 +1,9 @@
-import { useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { TeamList } from './TeamList';
 import { BinderList } from './BinderList';
 import { FolderContents } from './FolderContents';
-import type { Destination, SendLocationState } from '../jobs/types';
+import type { Destination, FilesLocationState, SendLocationState } from '../jobs/types';
 
 interface BreadcrumbItem {
   label: string;
@@ -17,11 +17,54 @@ interface BreadcrumbItem {
   folderName?: string;
 }
 
+function breadcrumbFromFilesState(state: unknown): BreadcrumbItem[] {
+  const files = state as FilesLocationState | null;
+  if (!files?.teamId || !files.binderId || !files.teamName || !files.binderName) {
+    return [{ label: 'Teams', level: 'teams' }];
+  }
+
+  return [
+    { label: 'Teams', level: 'teams' },
+    {
+      label: files.teamName,
+      level: 'binders',
+      id: files.teamId,
+      teamId: files.teamId,
+      teamName: files.teamName,
+    },
+    {
+      label: files.binderName,
+      level: 'contents',
+      id: files.binderId,
+      teamId: files.teamId,
+      teamName: files.teamName,
+      binderId: files.binderId,
+      binderName: files.binderName,
+    },
+    ...(files.folderPath ?? []).map((folder) => ({
+      label: folder.name,
+      level: 'contents' as const,
+      id: folder.id,
+      teamId: files.teamId,
+      teamName: files.teamName,
+      binderId: files.binderId,
+      binderName: files.binderName,
+      folderId: folder.id,
+      folderName: folder.name,
+    })),
+  ];
+}
+
 export function DestinationsPage() {
   const navigate = useNavigate();
-  const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([
-    { label: 'Teams', level: 'teams' },
-  ]);
+  const location = useLocation();
+  const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>(() =>
+    breadcrumbFromFilesState(location.state),
+  );
+
+  useEffect(() => {
+    setBreadcrumb(breadcrumbFromFilesState(location.state));
+  }, [location.key]);
 
   const current = breadcrumb[breadcrumb.length - 1];
 
@@ -74,7 +117,7 @@ export function DestinationsPage() {
     setBreadcrumb((prev) => prev.slice(0, index + 1));
   }, []);
 
-  const isBinderContents = breadcrumb.length === 3;
+  const isBinderContents = current.level === 'contents' && !current.folderId;
 
   const sendTarget = useMemo((): SendLocationState | null => {
     if (current.level !== 'contents' || !current.teamId || !current.binderId || !current.teamName || !current.binderName) {
@@ -105,7 +148,7 @@ export function DestinationsPage() {
 
   return (
     <div className="destinations-page">
-      <p className="page-lead">Sent documents are stored in this destination hierarchy. Open a team, then a binder or folder, to find one.</p>
+      <p className="page-lead page-lead--single">Sent documents are stored in this destination hierarchy. Open a team, then a binder or folder, to find one.</p>
       <div className="destinations-toolbar">
         <nav className="breadcrumb" aria-label="Navigation">
           {breadcrumb.map((item, index) => {

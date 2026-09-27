@@ -3,7 +3,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
-import type { DeliveryLocationState, JobSummary, TaskDetail } from './types';
+import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail } from './types';
+import { filesStateFromTask, filesStateFromTasks } from './filesLocation';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 
@@ -44,6 +45,9 @@ function deliverySeed(state: unknown, jobId: string | undefined): {
       binderId: task.binderId,
       folderId: task.folderId,
       destination: task.destination,
+      teamName: task.teamName ?? null,
+      binderName: task.binderName ?? null,
+      folderPath: task.folderPath ?? [],
       status: 'pending',
       attemptCount: 0,
       failureReason: null,
@@ -219,13 +223,21 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     void navigate(`/deliveries/${id}`);
   }, [navigate]);
 
+  const openInFiles = useCallback((target: FilesLocationState | null) => {
+    void navigate('/', { state: target ?? undefined });
+  }, [navigate]);
+
   const visibleJob = selectedJob?.jobId === selectedJobId ? selectedJob : null;
   const visibleTasks = visibleJob ? tasks : [];
 
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
-        <p className="page-lead">An audit of each send: who filed what, where it was placed, and whether it completed. The documents themselves are in Files.</p>
+        <p className="page-lead">
+          An audit of each send: who filed what, where it was placed, and whether it completed.
+          <br />
+          The documents themselves are in Files.
+        </p>
         {listLoading ? (
           <PageLoading label="Loading deliveries" />
         ) : jobs.length === 0 ? (
@@ -265,7 +277,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           &larr; All Deliveries
         </button>
         <h2>Delivery Details</h2>
-        <button type="button" className="btn" onClick={() => void navigate('/')}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => openInFiles(filesStateFromTasks(visibleTasks))}
+        >
           View in Files
         </button>
       </div>
@@ -361,7 +377,19 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             {visibleTasks.map((t) => (
               <tr key={t.taskId} className={`task-row task-${t.status}`}>
                 <td>{t.fileName ?? t.fileId.slice(0, 8)}</td>
-                <td className="task-destination">{t.destination ?? '—'}</td>
+                <td className="task-destination">
+                  {t.destination ? (
+                    <button
+                      type="button"
+                      className="task-destination-link"
+                      onClick={() => openInFiles(filesStateFromTask(t))}
+                    >
+                      {t.destination}
+                    </button>
+                  ) : (
+                    '—'
+                  )}
+                </td>
                 <td>
                   <span className={statusClass(t.status)}>{statusLabel(t.status)}</span>
                 </td>

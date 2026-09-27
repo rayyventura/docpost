@@ -58,10 +58,17 @@ export async function visibleTeams(userToken: string): Promise<Map<string, strin
   return new Map(teams.map((team) => [team.id, team.name]));
 }
 
+export interface DestinationPathDetail {
+  path: string;
+  teamName: string;
+  binderName: string;
+  folderPath: Array<{ id: string; name: string }>;
+}
+
 export async function destinationPaths(
   items: Array<{ teamId: string; binderId: string; folderId: string | null }>,
-): Promise<Map<string, string>> {
-  const paths = new Map<string, string>();
+): Promise<Map<string, DestinationPathDetail>> {
+  const paths = new Map<string, DestinationPathDetail>();
   if (items.length === 0) return paths;
 
   const keyFor = (item: { teamId: string; binderId: string; folderId: string | null }) =>
@@ -80,10 +87,23 @@ export async function destinationPaths(
     if (!res.ok) return paths;
 
     const body = (await res.json()) as {
-      destinations: Array<{ teamId: string; binderId: string; folderId: string | null; path: string }>;
+      destinations: Array<{
+        teamId: string;
+        binderId: string;
+        folderId: string | null;
+        path: string;
+        teamName?: string;
+        binderName?: string;
+        folderPath?: Array<{ id: string; name: string }>;
+      }>;
     };
     for (const destination of body.destinations ?? []) {
-      paths.set(keyFor(destination), destination.path);
+      paths.set(keyFor(destination), {
+        path: destination.path,
+        teamName: destination.teamName ?? '',
+        binderName: destination.binderName ?? '',
+        folderPath: destination.folderPath ?? [],
+      });
     }
   } catch {
     return paths;

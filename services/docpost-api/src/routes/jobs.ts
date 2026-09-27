@@ -359,11 +359,17 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
     })));
 
     res.json({
-      tasks: taskRows.map((t) => ({
-        ...t,
-        fileName: fileNameMap.get(t.fileId) ?? null,
-        destination: paths.get(`${t.teamId}:${t.binderId}:${t.folderId ?? ''}`) ?? null,
-      })),
+      tasks: taskRows.map((t) => {
+        const detail = paths.get(`${t.teamId}:${t.binderId}:${t.folderId ?? ''}`);
+        return {
+          ...t,
+          fileName: fileNameMap.get(t.fileId) ?? null,
+          destination: detail?.path ?? null,
+          teamName: detail?.teamName ?? null,
+          binderName: detail?.binderName ?? null,
+          folderPath: detail?.folderPath ?? [],
+        };
+      }),
       total,
       page,
       limit,
