@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
@@ -7,6 +7,7 @@ import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail 
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
+import { deliverySocketUrl } from './wsUrl';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
   job: JobSummary | null;
@@ -143,6 +144,29 @@ function aggregateStatus(counts: JobSummary['counts']): string {
   return 'in_progress';
 }
 
+const ACTIVE_POLL_MS = 750;
+const IDLE_POLL_MS = 15000;
+
+function jobHasOpenWork(job: JobSummary | null | undefined): boolean {
+  if (!job) return true;
+  return job.counts.pending + job.counts.in_progress > 0;
+}
+
+function applyTaskUpdate(tasks: TaskDetail[], message: { taskId?: string; status?: string; failureReason?: string }): TaskDetail[] {
+  if (!message.taskId || !message.status) return tasks;
+  let matched = false;
+  const next = tasks.map((task) => {
+    if (task.taskId !== message.taskId) return task;
+    matched = true;
+    return {
+      ...task,
+      status: message.status ?? task.status,
+      failureReason: message.failureReason ?? task.failureReason,
+    };
+  });
+  return matched ? next : tasks;
+}
+
 export function JobDashboard() {
   const { id } = useParams<{ id: string }>();
   return <JobDashboardView key={id ?? 'list'} jobId={id} />;
@@ -183,34 +207,55 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     };
   }, [selectedJobId]);
 
-  // Load selected job details and tasks
+  const loadDetails = useCallback(async (showLoading: boolean): Promise<JobSummary | null> => {
+    if (!selectedJobId) return null;
+    if (showLoading) setLoading(true);
+    try {
+      const filterParam = statusFilter ? `&status=${statusFilter}` : '';
+      const [job, taskData] = await Promise.all([
+        apiRequest<JobSummary>(`/jobs/${selectedJobId}`),
+        apiRequest<{ tasks: TaskDetail[]; total: number }>(
+          `/jobs/${selectedJobId}/tasks?page=${taskPage}&limit=100${filterParam}`,
+        ),
+      ]);
+      if (job.jobId !== selectedJobId) return null;
+      setSelectedJob(job);
+      setTasks(taskData.tasks);
+      setTaskTotal(taskData.total);
+      return job;
+    } catch (err) {
+      console.error(err);
+      return null;
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, [selectedJobId, taskPage, statusFilter]);
+
+  const loadDetailsRef = useRef(loadDetails);
+  loadDetailsRef.current = loadDetails;
+
   useEffect(() => {
     if (!selectedJobId) return;
 
-    const loadJob = async () => {
-      setLoading(true);
-      try {
-        const job = await apiRequest<JobSummary>(`/jobs/${selectedJobId}`);
-        if (job.jobId !== selectedJobId) return;
-        setSelectedJob(job);
+    let cancelled = false;
+    let timer = 0;
 
-        const filterParam = statusFilter ? `&status=${statusFilter}` : '';
-        const taskData = await apiRequest<{ tasks: TaskDetail[]; total: number }>(
-          `/jobs/${selectedJobId}/tasks?page=${taskPage}&limit=100${filterParam}`,
-        );
-        setTasks(taskData.tasks);
-        setTaskTotal(taskData.total);
-      } catch (err) {
-        console.error(err);
-      }
-      setLoading(false);
+    const tick = async (showLoading: boolean) => {
+      const job = await loadDetails(showLoading);
+      if (cancelled) return;
+      timer = window.setTimeout(
+        () => void tick(false),
+        jobHasOpenWork(job) ? ACTIVE_POLL_MS : IDLE_POLL_MS,
+      );
     };
 
-    void loadJob();
+    void tick(!seed.job);
 
-    const interval = setInterval(() => void loadJob(), 15000);
-    return () => clearInterval(interval);
-  }, [selectedJobId, taskPage, statusFilter]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [selectedJobId, loadDetails]);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -224,8 +269,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     let timer = 0;
 
     const connect = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      socket = new WebSocket(`${protocol}://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+      socket = new WebSocket(deliverySocketUrl(token));
 
       socket.onopen = () => {
         attempt = 0;
@@ -242,24 +286,26 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           counts?: JobSummary['counts'];
         };
         if (message.type === 'subscribed') {
-          void apiRequest<JobSummary>(`/jobs/${selectedJobId}`).then(setSelectedJob).catch(console.error);
+          void loadDetailsRef.current(false);
           return;
         }
         if (message.type !== 'task_update' || message.jobId !== selectedJobId) return;
 
-        if (message.taskId && message.status) {
-          setTasks((current) => current.map((task) => (
-            task.taskId === message.taskId
-              ? { ...task, status: message.status ?? task.status, failureReason: message.failureReason ?? task.failureReason }
-              : task
-          )));
-        }
+        const before = { matched: false };
+        setTasks((current) => {
+          const next = applyTaskUpdate(current, message);
+          before.matched = next !== current;
+          return next;
+        });
         if (message.counts) {
           setSelectedJob((current) => current ? {
             ...current,
             counts: message.counts ?? current.counts,
             aggregateStatus: aggregateStatus(message.counts ?? current.counts),
           } : current);
+        }
+        if (!before.matched) {
+          void loadDetailsRef.current(false);
         }
       };
 

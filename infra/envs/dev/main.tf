@@ -490,6 +490,7 @@ module "lambda_delivery" {
     AUTH_TOKEN_URL      = "http://${module.alb.alb_dns_name}/auth/token"
     DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
     DATABASE_SECRET_ARN = module.rds_instance.secret_arns["docpost_service"]
+    WS_CALLBACK_URL     = module.websocket_api.callback_url
   }
 }
 
@@ -555,6 +556,31 @@ module "lambda_ws_lifecycle" {
     AUTH_TOKEN_URL      = "http://${module.alb.alb_dns_name}/auth/token"
     AUTH_JWKS_URL       = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
   }
+}
+
+module "websocket_api" {
+  source = "../../modules/websocket-api"
+
+  project_name         = var.project_name
+  environment          = var.environment
+  lambda_invoke_arn    = module.lambda_ws_lifecycle.invoke_arn
+  lambda_function_name = module.lambda_ws_lifecycle.function_name
+}
+
+resource "aws_iam_role_policy" "delivery_manage_connections" {
+  name = "${var.project_name}-${var.environment}-delivery-ws"
+  role = module.lambda_delivery.role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["execute-api:ManageConnections"]
+        Resource = "${module.websocket_api.execution_arn}/*"
+      },
+    ]
+  })
 }
 
 # =============================================================================
@@ -630,4 +656,11 @@ resource "aws_ssm_parameter" "staging_bucket_name" {
   description = "S3 bucket for staged uploads."
   type        = "String"
   value       = module.s3_staging.staging_bucket_name
+}
+
+resource "aws_ssm_parameter" "ws_url" {
+  name        = "${local.ssm_prefix}/ws_url"
+  description = "WebSocket URL for live delivery updates (VITE_WS_URL)."
+  type        = "String"
+  value       = module.websocket_api.client_url
 }
