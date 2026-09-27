@@ -64,11 +64,13 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
 
       const mappingPayload = readyFiles.map((_, i) => ({
         fileIndex: i,
-        destinations: destinations.map((d) => ({
-          teamId: d.teamId,
-          binderId: d.binderId ?? null,
-          folderId: d.folderId ?? null,
-        })),
+        destinations: destinations
+          .filter((d) => d.binderId)
+          .map((d) => ({
+            teamId: d.teamId,
+            binderId: d.binderId,
+            folderId: d.folderId ?? null,
+          })),
       }));
 
       const response = await apiRequest<JobSubmitResponse>('/jobs', {
@@ -133,7 +135,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
           destinations.map((destination) => ({
             fileName: file.file.name,
             teamId: destination.teamId,
-            binderId: destination.binderId ?? '',
+            binderId: destination.binderId,
             folderId: destination.folderId ?? null,
             destination: destinationLabel(destination),
           })),
@@ -168,7 +170,7 @@ export function NewJobPage({ onJobCreated }: NewJobPageProps) {
           <div className="summary-destinations">
             {destinations.map((d, i) => (
               <span key={i} className="dest-chip">
-                {d.binderName ? `${d.teamName} / ${d.binderName}` : d.teamName}
+                {`${d.teamName} / ${d.binderName}`}
                 {d.folderName && ` / ${d.folderName}`}
                 {!submitting && (
                   <button
