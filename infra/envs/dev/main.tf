@@ -189,7 +189,8 @@ module "alb" {
       name              = "platform"
       port              = 3000
       health_check_path = "/health"
-      path_patterns     = ["/platform/*"]
+      # /internal/* is service-to-service only; API Gateway does not route it.
+      path_patterns     = ["/platform/*", "/internal/*"]
       priority          = 200
     },
     {
