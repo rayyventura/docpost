@@ -212,8 +212,6 @@ module "alb" {
 module "ecs_auth" {
   source = "../../modules/ecs-service"
 
-  wait_for_steady_state = false
-
   project_name       = var.project_name
   environment        = var.environment
   region             = var.region
@@ -247,8 +245,6 @@ module "ecs_auth" {
 
 module "ecs_platform" {
   source = "../../modules/ecs-service"
-
-  wait_for_steady_state = false
 
   project_name       = var.project_name
   environment        = var.environment
@@ -313,8 +309,6 @@ resource "aws_iam_policy" "docpost_api_runtime" {
 
 module "ecs_docpost_api" {
   source = "../../modules/ecs-service"
-
-  wait_for_steady_state = false
 
   project_name       = var.project_name
   environment        = var.environment
