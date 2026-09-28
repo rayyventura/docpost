@@ -7,7 +7,7 @@ import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail 
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
-import { applyJobCounts, applyTaskUpdate, mergeFetchedTasks } from './taskUpdates';
+import { applyJobCounts, applyTaskUpdate, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import { deliverySocketUrl } from './wsUrl';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
@@ -148,6 +148,13 @@ function aggregateStatus(counts: JobSummary['counts']): string {
 const ACTIVE_POLL_MS = 750;
 const IDLE_POLL_MS = 15000;
 
+const COUNT_SEGMENTS = [
+  { key: 'completed', status: 'completed', countKey: 'completed', label: 'completed' },
+  { key: 'in-progress', status: 'in_progress', countKey: 'in_progress', label: 'in progress' },
+  { key: 'pending', status: 'pending', countKey: 'pending', label: 'pending' },
+  { key: 'failed', status: 'failed', countKey: 'failed', label: 'failed' },
+] as const;
+
 function jobHasOpenWork(job: JobSummary | null | undefined): boolean {
   if (!job) return true;
   return job.counts.pending + job.counts.in_progress > 0;
@@ -171,7 +178,10 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(!seed.job && !!selectedJobId);
   const [listLoading, setListLoading] = useState(!selectedJobId);
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const uploads = useJobUploads(selectedJobId);
+  const pendingScrollStatus = useRef<string | null>(null);
+  const focusTimer = useRef(0);
 
   // Load job list
   useEffect(() => {
@@ -348,6 +358,37 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     : [];
   const visibleStatus = uploading ? 'uploading' : visibleJob?.aggregateStatus;
 
+  const revealStatus = useCallback((status: string, rows: TaskDetail[]) => {
+    const taskId = firstTaskIdForStatus(rows, status);
+    if (!taskId) return;
+    window.clearTimeout(focusTimer.current);
+    setFocusTaskId(taskId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`task-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    focusTimer.current = window.setTimeout(() => setFocusTaskId(null), 1600);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(focusTimer.current), []);
+
+  useEffect(() => {
+    const status = pendingScrollStatus.current;
+    if (!status || loading) return;
+    pendingScrollStatus.current = null;
+    revealStatus(status, visibleTasks);
+  }, [loading, statusFilter, tasks, visibleTasks, revealStatus]);
+
+  const handleCountSegment = (status: string, count: number) => {
+    if (count <= 0) return;
+    if (statusFilter && statusFilter !== status) {
+      pendingScrollStatus.current = status;
+      setStatusFilter('');
+      setTaskPage(1);
+      return;
+    }
+    revealStatus(status, visibleTasks);
+  };
+
   if (!selectedJobId) {
     return (
       <div className="job-dashboard">
@@ -420,21 +461,23 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
               {uploadedByLine(visibleJob.submitterName, visibleJob.createdAt)}
             </span>
           </div>
-          <div className="counts-bar">
-            {([
-              ['completed', visibleJob.counts.completed],
-              ['in-progress', visibleJob.counts.in_progress],
-              ['pending', visibleJob.counts.pending],
-              ['failed', visibleJob.counts.failed],
-            ] as const).map(([key, count]) => (
-              <div
-                key={key}
-                className={`count-segment count-${key}${count === 0 ? ' count-segment--empty' : ''}`}
-                style={{ width: `${(count / visibleJob.taskCount) * 100}%` }}
-              >
-                {count > 0 ? count : null}
-              </div>
-            ))}
+          <div className="counts-bar" role="group" aria-label="Jump to a delivery status">
+            {COUNT_SEGMENTS.map((segment) => {
+              const count = visibleJob.counts[segment.countKey];
+              return (
+                <button
+                  key={segment.key}
+                  type="button"
+                  className={`count-segment count-${segment.key}${count === 0 ? ' count-segment--empty' : ''}`}
+                  style={{ width: `${(count / visibleJob.taskCount) * 100}%` }}
+                  disabled={count === 0}
+                  aria-label={`Jump to the first ${segment.label} item`}
+                  onClick={() => handleCountSegment(segment.status, count)}
+                >
+                  {count > 0 ? count : null}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -480,7 +523,12 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             {visibleTasks.map((t) => {
               const upload = uploadForTask(t, uploads);
               return (
-              <tr key={t.taskId} className={`task-row task-${t.status}`}>
+              <tr
+                key={t.taskId}
+                id={`task-${t.taskId}`}
+                data-task-status={t.status}
+                className={`task-row task-${t.status}${focusTaskId === t.taskId ? ' task-row--focus' : ''}`}
+              >
                 <td className="task-file">{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">
                   {t.destination ? (

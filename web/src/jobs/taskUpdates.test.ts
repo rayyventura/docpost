@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyJobCounts, applyTaskUpdate, mergeFetchedTasks } from './taskUpdates';
+import { applyJobCounts, applyTaskUpdate, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import type { TaskDetail } from './types';
 
 function task(overrides: Partial<TaskDetail>): TaskDetail {
@@ -70,6 +70,17 @@ describe('mergeFetchedTasks', () => {
       status: 'in_progress',
       attemptCount: 1,
     });
+  });
+});
+
+describe('firstTaskIdForStatus', () => {
+  it('returns the first row with that status', () => {
+    const rows = [
+      task({ taskId: 'a', status: 'completed' }),
+      task({ taskId: 'b', status: 'failed' }),
+      task({ taskId: 'c', status: 'failed' }),
+    ];
+    expect(firstTaskIdForStatus(rows, 'failed')).toBe('b');
   });
 });
 

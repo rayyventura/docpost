@@ -64,6 +64,11 @@ output "api_endpoint" {
   value       = module.api_gateway.api_endpoint
 }
 
+output "ws_url" {
+  description = "WebSocket URL for live delivery updates (VITE_WS_URL)."
+  value       = module.websocket_api.client_url
+}
+
 # -- CDN -----------------------------------------------------------------------
 output "cdn_domain_name" {
   description = "CloudFront distribution domain name."
