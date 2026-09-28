@@ -1,14 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { eq, and, asc, isNull, inArray } from 'drizzle-orm';
 import { FOLDER_DESTINATION_REQUIRED, ForbiddenError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { teamMembers, teams, binders, folders, documents } from '../db/schema.js';
 import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
 import { assertFolderDestinations } from '../lib/folderDestinations.js';
+import { isUuid } from '../lib/ids.js';
 
 const router = Router();
 
 async function verifyBinderMembership(binderId: string, userId: string): Promise<void> {
+  // Malformed ids get the same 403 as an unknown binder (existence is not disclosed).
+  if (!isUuid(binderId) || !isUuid(userId)) {
+    throw new ForbiddenError();
+  }
+
   const db = getDb();
 
   const binderResult = await db
@@ -79,7 +85,8 @@ router.get(
             eq(folders.binderId, binderId),
             isNull(folders.parentFolderId),
           ),
-        );
+        )
+        .orderBy(asc(folders.name), asc(folders.id));
 
       const rootDocs = await db
         .select({
@@ -95,7 +102,8 @@ router.get(
             eq(documents.binderId, binderId),
             isNull(documents.folderId),
           ),
-        );
+        )
+        .orderBy(asc(documents.name), asc(documents.id));
 
       res.json({
         folders: rootFolders,
@@ -115,6 +123,11 @@ router.get(
     try {
       const userId = req.user!.sub;
       const folderId = req.params.folderId as string;
+
+      // Malformed ids get the same 403 as an unknown folder (existence is not disclosed).
+      if (!isUuid(folderId)) {
+        throw new ForbiddenError();
+      }
 
       const db = getDb();
 
@@ -140,7 +153,8 @@ router.get(
           name: folders.name,
         })
         .from(folders)
-        .where(eq(folders.parentFolderId, folderId));
+        .where(eq(folders.parentFolderId, folderId))
+        .orderBy(asc(folders.name), asc(folders.id));
 
       const folderDocs = await db
         .select({
@@ -151,7 +165,8 @@ router.get(
           createdAt: documents.createdAt,
         })
         .from(documents)
-        .where(eq(documents.folderId, folderId));
+        .where(eq(documents.folderId, folderId))
+        .orderBy(asc(documents.name), asc(documents.id));
 
       res.json({
         folders: childFolders,
@@ -174,9 +189,10 @@ router.post(
         return;
       }
 
-      const teamIds = [...new Set(items.map((item: { teamId?: string }) => item.teamId).filter(Boolean))] as string[];
-      const binderIds = [...new Set(items.map((item: { binderId?: string }) => item.binderId).filter(Boolean))] as string[];
-      const folderIds = [...new Set(items.map((item: { folderId?: string | null }) => item.folderId).filter(Boolean))] as string[];
+      // Malformed ids are not looked up, so they resolve to empty labels like unknown ids.
+      const teamIds = [...new Set(items.map((item: { teamId?: unknown }) => item.teamId))].filter(isUuid);
+      const binderIds = [...new Set(items.map((item: { binderId?: unknown }) => item.binderId))].filter(isUuid);
+      const folderIds = [...new Set(items.map((item: { folderId?: unknown }) => item.folderId))].filter(isUuid);
 
       const db = getDb();
       const [teamRows, binderRows] = await Promise.all([

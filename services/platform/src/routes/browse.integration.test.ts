@@ -21,8 +21,9 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
   beforeAll(async () => {
     h = await startHarness();
     const f = h.fixtures;
-    teamId = await f.team();
-    disabledTeamId = await f.team({ docpostEnabled: false });
+    // Named so name order (disabled first) is the reverse of insertion order.
+    teamId = await f.team({ name: `Zeta browse ${uid()}` });
+    disabledTeamId = await f.team({ name: `Alpha browse ${uid()}`, docpostEnabled: false });
     otherTeamId = await f.team();
     await f.member(teamId, member);
     await f.member(disabledTeamId, member);
@@ -69,11 +70,11 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
   });
 
   describe('GET /teams', () => {
-    it('lists only teams the token subject belongs to', async () => {
+    it('lists only teams the token subject belongs to, ordered by name', async () => {
       const res = await h.request('/teams', { token: await h.userToken(member) });
       expect(res.status).toBe(200);
       const body = (await res.json()) as Array<{ id: string; name: string; region: string }>;
-      expect(body.map((t) => t.id).sort()).toEqual([teamId, disabledTeamId].sort());
+      expect(body.map((t) => t.id)).toEqual([disabledTeamId, teamId]);
       expect(body.map((t) => t.id)).not.toContain(otherTeamId);
       expect(Object.keys(body[0]).sort()).toEqual(['id', 'name', 'region']);
     });
@@ -88,6 +89,12 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
 
     it('returns an empty list for a user with no memberships', async () => {
       const res = await h.request('/teams', { token: await h.userToken(uid()) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([]);
+    });
+
+    it('returns an empty list (not a 500) for a token whose subject is not a uuid', async () => {
+      const res = await h.request('/teams', { token: await h.userToken('not-a-uuid') });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual([]);
     });
@@ -109,6 +116,32 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
     it('returns 403 for a team that does not exist', async () => {
       const res = await h.request(`/teams/${uid()}/binders`, { token: await h.userToken(member) });
       expect(res.status).toBe(403);
+    });
+
+    it('returns the same 403 as an unknown team for a malformed team id', async () => {
+      const res = await h.request('/teams/not-a-uuid/binders', { token: await h.userToken(member) });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe('FORBIDDEN');
+    });
+
+    it('orders binders by name, then id', async () => {
+      // The member's disabled team has no other binders; creating a team here would
+      // race with the membership fan-out test in another file.
+      const team = disabledTeamId;
+      const charlie = await h.fixtures.binder(team, 'Charlie');
+      const bravo1 = await h.fixtures.binder(team, 'Bravo');
+      const alpha = await h.fixtures.binder(team, 'Alpha');
+      const bravo2 = await h.fixtures.binder(team, 'Bravo');
+      const [bravoLow, bravoHigh] = [bravo1, bravo2].sort();
+
+      const res = await h.request(`/teams/${team}/binders`, { token: await h.userToken(member) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([
+        { id: alpha, name: 'Alpha' },
+        { id: bravoLow, name: 'Bravo' },
+        { id: bravoHigh, name: 'Bravo' },
+        { id: charlie, name: 'Charlie' },
+      ]);
     });
   });
 
@@ -147,11 +180,30 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
       expect(res.status).toBe(403);
     });
 
-    // BUG: a malformed id reaches Postgres as a uuid parameter and surfaces as a 500
-    // INTERNAL_ERROR instead of a client error (403/404/422).
-    it.fails('returns a 4xx for a malformed binder id', async () => {
+    it('returns the same 403 as an unknown binder for a malformed binder id', async () => {
       const res = await h.request('/binders/not-a-uuid/contents', { token: await h.userToken(member) });
-      expect(res.status).toBeLessThan(500);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe('FORBIDDEN');
+    });
+
+    it('returns 403 (not a 500) for a token whose subject is not a uuid', async () => {
+      const res = await h.request(`/binders/${binderId}/contents`, { token: await h.userToken('not-a-uuid') });
+      expect(res.status).toBe(403);
+    });
+
+    it('orders root folders and root documents by name, then id', async () => {
+      const b = await h.fixtures.binder(teamId);
+      const fCharlie = await h.fixtures.folder(b, null, 'Charlie');
+      const fAlpha = await h.fixtures.folder(b, null, 'Alpha');
+      const fBravo = await h.fixtures.folder(b, null, 'Bravo');
+      const dC = await h.fixtures.document({ binderId: b, name: 'c.pdf' });
+      const dB1 = await h.fixtures.document({ binderId: b, name: 'b.pdf' });
+      const dA = await h.fixtures.document({ binderId: b, name: 'a.pdf' });
+      const dB2 = await h.fixtures.document({ binderId: b, name: 'b.pdf' });
+
+      const body = await (await h.request(`/binders/${b}/contents`, { token: await h.userToken(member) })).json();
+      expect(body.folders.map((x: { id: string }) => x.id)).toEqual([fAlpha, fBravo, fCharlie]);
+      expect(body.documents.map((x: { id: string }) => x.id)).toEqual([dA, ...[dB1, dB2].sort(), dC]);
     });
   });
 
@@ -179,6 +231,27 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
       const res = await h.request(`/folders/${uid()}/contents`, { token: await h.userToken(member) });
       expect(res.status).toBe(403);
     });
+
+    it('returns the same 403 as an unknown folder for a malformed folder id', async () => {
+      const res = await h.request('/folders/not-a-uuid/contents', { token: await h.userToken(member) });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe('FORBIDDEN');
+    });
+
+    it('orders child folders and documents by name, then id', async () => {
+      // A separate binder keeps the shared fixture tree above unchanged.
+      const b = await h.fixtures.binder(teamId);
+      const parent = await h.fixtures.folder(b, null, 'Ordering parent');
+      const fBravo = await h.fixtures.folder(b, parent, 'Bravo');
+      const fAlpha1 = await h.fixtures.folder(b, parent, 'Alpha');
+      const fAlpha2 = await h.fixtures.folder(b, parent, 'Alpha');
+      const dZ = await h.fixtures.document({ binderId: b, folderId: parent, name: 'z.pdf' });
+      const dM = await h.fixtures.document({ binderId: b, folderId: parent, name: 'm.pdf' });
+
+      const body = await (await h.request(`/folders/${parent}/contents`, { token: await h.userToken(member) })).json();
+      expect(body.folders.map((x: { id: string }) => x.id)).toEqual([...[fAlpha1, fAlpha2].sort(), fBravo]);
+      expect(body.documents.map((x: { id: string }) => x.id)).toEqual([dM, dZ]);
+    });
   });
 
   describe('listing size and pagination', () => {
@@ -189,11 +262,13 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
       const bigBinder = await h.fixtures.binder(teamId);
       const folderCount = 120;
       const docCount = 105;
-      for (let i = 0; i < folderCount; i++) {
-        await h.fixtures.folder(bigBinder, null, `bulk-folder-${i}`);
+      const pad = (i: number) => String(i).padStart(3, '0');
+      // Inserted in reverse so the response order has to come from ORDER BY.
+      for (let i = folderCount - 1; i >= 0; i--) {
+        await h.fixtures.folder(bigBinder, null, `bulk-folder-${pad(i)}`);
       }
-      for (let i = 0; i < docCount; i++) {
-        await h.fixtures.document({ binderId: bigBinder, name: `bulk-${i}.pdf` });
+      for (let i = docCount - 1; i >= 0; i--) {
+        await h.fixtures.document({ binderId: bigBinder, name: `bulk-${pad(i)}.pdf` });
       }
 
       const token = await h.userToken(member);
@@ -201,12 +276,19 @@ describe.skipIf(!process.env.INTEGRATION)('platform browse routes (integration)'
       expect(full.folders).toHaveLength(folderCount);
       expect(full.documents).toHaveLength(docCount);
       expect(new Set(full.folders.map((f: { id: string }) => f.id)).size).toBe(folderCount);
+      expect(full.folders.map((f: { name: string }) => f.name)).toEqual(
+        Array.from({ length: folderCount }, (_, i) => `bulk-folder-${pad(i)}`),
+      );
+      expect(full.documents.map((d: { name: string }) => d.name)).toEqual(
+        Array.from({ length: docCount }, (_, i) => `bulk-${pad(i)}.pdf`),
+      );
 
       const paged = await (
         await h.request(`/binders/${bigBinder}/contents?page=2&limit=10&pageSize=10`, { token })
       ).json();
       expect(paged.folders).toHaveLength(folderCount);
       expect(paged.documents).toHaveLength(docCount);
+      expect(paged).toEqual(full);
     });
   });
 });

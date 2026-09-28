@@ -1,11 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { teamMembers, teams } from '../db/schema.js';
 import { requireServiceAuth } from '../middleware/auth.js';
-
-const USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUuid } from '../lib/ids.js';
 
 const router = Router();
 
@@ -15,7 +14,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const teamId = req.params.teamId as string;
-      if (!USER_ID_PATTERN.test(teamId)) {
+      if (!isUuid(teamId)) {
         throw new ValidationError('Invalid team id');
       }
 
@@ -43,7 +42,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const teamId = req.params.teamId as string;
-      if (!USER_ID_PATTERN.test(teamId)) {
+      if (!isUuid(teamId)) {
         throw new ValidationError('Invalid team id');
       }
 
@@ -51,7 +50,8 @@ router.get(
       const rows = await db
         .select({ userId: teamMembers.userId })
         .from(teamMembers)
-        .where(eq(teamMembers.teamId, teamId));
+        .where(eq(teamMembers.teamId, teamId))
+        .orderBy(asc(teamMembers.userId));
 
       res.json({ userIds: rows.map((row) => row.userId) });
     } catch (err) {
@@ -67,6 +67,12 @@ router.get(
     try {
       const teamId = req.params.teamId as string;
       const userId = req.params.userId as string;
+
+      // A malformed id cannot match a membership; answer like an unknown one.
+      if (!isUuid(teamId) || !isUuid(userId)) {
+        res.sendStatus(404);
+        return;
+      }
 
       const db = getDb();
 
@@ -108,7 +114,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.params.userId as string;
-      if (!USER_ID_PATTERN.test(userId)) {
+      if (!isUuid(userId)) {
         throw new ValidationError('Invalid user id');
       }
 
@@ -135,7 +141,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.params.userId as string;
-      if (!USER_ID_PATTERN.test(userId)) {
+      if (!isUuid(userId)) {
         throw new ValidationError('Invalid user id');
       }
 
@@ -143,7 +149,8 @@ router.get(
       const rows = await db
         .select({ teamId: teamMembers.teamId })
         .from(teamMembers)
-        .where(eq(teamMembers.userId, userId));
+        .where(eq(teamMembers.userId, userId))
+        .orderBy(asc(teamMembers.teamId));
 
       res.json({ teamIds: rows.map((row) => row.teamId) });
     } catch (err) {

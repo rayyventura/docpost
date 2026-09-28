@@ -26,9 +26,12 @@ vi.mock('../db/index.js', () => ({
 
 const { assertFolderDestinations } = await import('./folderDestinations.js');
 
-const TEAM = 'team-1';
-const BINDER = 'binder-1';
-const FOLDER = 'folder-1';
+const TEAM = '11111111-1111-4111-8111-111111111111';
+const TEAM_2 = '11111111-1111-4111-8111-222222222222';
+const BINDER = '22222222-2222-4222-8222-111111111111';
+const BINDER_2 = '22222222-2222-4222-8222-222222222222';
+const FOLDER = '33333333-3333-4333-8333-111111111111';
+const FOLDER_2 = '33333333-3333-4333-8333-222222222222';
 
 function seed(binderRows: Row[], folderRows: Row[]) {
   db.binderRows = binderRows;
@@ -77,7 +80,7 @@ describe('assertFolderDestinations', () => {
 
   it('rejects a binder from another team', async () => {
     await expect(
-      assertFolderDestinations([{ teamId: 'team-2', binderId: BINDER, folderId: FOLDER }]),
+      assertFolderDestinations([{ teamId: TEAM_2, binderId: BINDER, folderId: FOLDER }]),
     ).rejects.toThrow('Binder does not belong to the specified team');
   });
 
@@ -92,9 +95,9 @@ describe('assertFolderDestinations', () => {
     seed(
       [
         { id: BINDER, teamId: TEAM },
-        { id: 'binder-2', teamId: TEAM },
+        { id: BINDER_2, teamId: TEAM },
       ],
-      [{ id: FOLDER, binderId: 'binder-2' }],
+      [{ id: FOLDER, binderId: BINDER_2 }],
     );
     await expect(
       assertFolderDestinations([{ teamId: TEAM, binderId: BINDER, folderId: FOLDER }]),
@@ -105,18 +108,36 @@ describe('assertFolderDestinations', () => {
     seed(
       [
         { id: BINDER, teamId: TEAM },
-        { id: 'binder-2', teamId: TEAM },
+        { id: BINDER_2, teamId: TEAM },
       ],
       [
         { id: FOLDER, binderId: BINDER },
-        { id: 'folder-2', binderId: 'binder-2' },
+        { id: FOLDER_2, binderId: BINDER_2 },
       ],
     );
     await assertFolderDestinations([
       { teamId: TEAM, binderId: BINDER, folderId: FOLDER },
-      { teamId: TEAM, binderId: 'binder-2', folderId: 'folder-2' },
+      { teamId: TEAM, binderId: BINDER_2, folderId: FOLDER_2 },
       { teamId: TEAM, binderId: BINDER, folderId: FOLDER },
     ]);
     expect(db.selects).toBe(2);
+  });
+
+  it.each([
+    ['binderId', { teamId: TEAM, binderId: 'not-a-uuid', folderId: FOLDER }, 'Binder does not belong to the specified team'],
+    ['folderId', { teamId: TEAM, binderId: BINDER, folderId: 'not-a-uuid' }, 'Choose a folder in the selected binder'],
+  ])('treats a malformed %s like an unknown one and never sends it to the database', async (_field, item, message) => {
+    const err = await assertFolderDestinations([item]).catch((e) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.message).toBe(message);
+    // Only the well-formed id is looked up.
+    expect(db.selects).toBe(1);
+  });
+
+  it('skips both lookups when every id is malformed', async () => {
+    await expect(
+      assertFolderDestinations([{ teamId: TEAM, binderId: 'x', folderId: 'y' }]),
+    ).rejects.toThrow('Binder does not belong to the specified team');
+    expect(db.selects).toBe(0);
   });
 });

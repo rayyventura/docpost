@@ -1,6 +1,7 @@
 import { inArray } from 'drizzle-orm';
 import { FOLDER_DESTINATION_REQUIRED, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
+import { isUuid } from './ids.js';
 import { binders, folders } from '../db/schema.js';
 
 export async function assertFolderDestinations(
@@ -16,15 +17,20 @@ export async function assertFolderDestinations(
     }
   }
 
-  const binderIds = [...new Set(items.map((item) => item.binderId))];
-  const folderIds = [...new Set(items.map((item) => item.folderId as string))];
+  // Malformed ids are left out of the lookups, so they fail below exactly like unknown ids.
+  const binderIds = [...new Set(items.map((item) => item.binderId))].filter(isUuid);
+  const folderIds = [...new Set(items.map((item) => item.folderId))].filter(isUuid);
   const db = getDb();
   const [binderRows, folderRows] = await Promise.all([
-    db.select({ id: binders.id, teamId: binders.teamId }).from(binders).where(inArray(binders.id, binderIds)),
-    db
-      .select({ id: folders.id, binderId: folders.binderId })
-      .from(folders)
-      .where(inArray(folders.id, folderIds)),
+    binderIds.length
+      ? db.select({ id: binders.id, teamId: binders.teamId }).from(binders).where(inArray(binders.id, binderIds))
+      : [],
+    folderIds.length
+      ? db
+          .select({ id: folders.id, binderId: folders.binderId })
+          .from(folders)
+          .where(inArray(folders.id, folderIds))
+      : [],
   ]);
   const binderById = new Map(binderRows.map((binder) => [binder.id, binder]));
   const folderById = new Map(folderRows.map((folder) => [folder.id, folder]));

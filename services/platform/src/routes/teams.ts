@@ -1,8 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { teams, teamMembers } from '../db/schema.js';
 import { requireUserAuth } from '../middleware/auth.js';
+import { isUuid } from '../lib/ids.js';
 
 const router = Router();
 
@@ -13,6 +14,12 @@ router.get(
     try {
       const userId = req.user!.sub;
       const docPostEnabled = req.query.docPostEnabled as string | undefined;
+
+      // A subject that is not a uuid cannot be a member of anything.
+      if (!isUuid(userId)) {
+        res.json([]);
+        return;
+      }
 
       const db = getDb();
 
@@ -25,7 +32,8 @@ router.get(
         })
         .from(teamMembers)
         .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-        .where(eq(teamMembers.userId, userId));
+        .where(eq(teamMembers.userId, userId))
+        .orderBy(asc(teams.name), asc(teams.id));
 
       let result = memberships;
 

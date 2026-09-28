@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getDb } from '../db/index.js';
 import { documents } from '../db/schema.js';
 import type { Harness } from '../test/harness.js';
@@ -150,16 +150,32 @@ describe.skipIf(!process.env.INTEGRATION)('platform documents routes (integratio
       expect(await rowsForTask(payload.taskId)).toHaveLength(0);
     });
 
-    // GAP: the checksum is only compared when HEAD returns ChecksumType=FULL_OBJECT.
-    // LocalStack returns ChecksumSHA256 but no ChecksumType, and multipart uploads
-    // report COMPOSITE, so a same-size object with the wrong declared SHA-256 is
-    // accepted (201). The blueprint says the platform rejects on checksum mismatch.
-    it.fails('returns 422 CHECKSUM_MISMATCH when the declared SHA-256 differs (same size)', async () => {
+    // LocalStack reports ChecksumSHA256 without ChecksumType (and multipart uploads
+    // report COMPOSITE), so this exercises the streamed-hash path.
+    it('returns 422 CHECKSUM_MISMATCH when the declared SHA-256 differs (same size)', async () => {
       const obj = await staged();
       const payload = body({ ...obj, checksumSha256: sha256Hex(Buffer.from('something else')) });
       const { status, json } = await ingest(payload);
       expect(status).toBe(422);
       expect(json.error.code).toBe('CHECKSUM_MISMATCH');
+      expect(await rowsForTask(payload.taskId)).toHaveLength(0);
+    });
+
+    it('verifies the checksum of a staged object uploaded without an S3 checksum', async () => {
+      const bytes = Buffer.from(`no s3 checksum ${uid()}`);
+      const s3Key = `uploads/it-${uid()}/unchecksummed.pdf`;
+      await h.s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: s3Key, Body: bytes, ContentType: 'application/pdf' }));
+      h.fixtures.objectKeys.push(s3Key);
+      const head = await h.s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: s3Key, ChecksumMode: 'ENABLED' }));
+      expect(head.ChecksumType).not.toBe('FULL_OBJECT');
+
+      const bad = body({ s3Key, sizeBytes: bytes.length, checksumSha256: sha256Hex(Buffer.from('nope')) });
+      const rejected = await ingest(bad);
+      expect(rejected.status).toBe(422);
+      expect(rejected.json.error.code).toBe('CHECKSUM_MISMATCH');
+
+      const good = body({ s3Key, sizeBytes: bytes.length, checksumSha256: sha256Hex(bytes) });
+      expect((await ingest(good)).status).toBe(201);
     });
 
     it('returns 404 when the staged source object is missing', async () => {
@@ -202,14 +218,18 @@ describe.skipIf(!process.env.INTEGRATION)('platform documents routes (integratio
       expect((await ingest(payload, await h.serviceToken('memberships:read documents:ingest'))).status).toBe(201);
     });
 
-    // BUG: ids are not validated as UUIDs before hitting Postgres, so a malformed
-    // binderId (or taskId/onBehalfOf) surfaces as 500 INTERNAL_ERROR. The delivery
-    // worker treats 5xx as transient and retries until the DLQ instead of failing fast.
-    it.fails('returns a 4xx for a malformed binderId', async () => {
-      const obj = await staged();
-      const { status } = await ingest(body({ ...obj, binderId: 'not-a-uuid' }));
-      expect(status).toBeLessThan(500);
-    });
+    // 422 (not 5xx) so the delivery worker fails fast instead of retrying to the DLQ.
+    it.each(['taskId', 'binderId', 'folderId', 'onBehalfOf'])(
+      'returns 422 VALIDATION_ERROR for a malformed %s',
+      async (field) => {
+        const obj = await staged();
+        const payload = body({ ...obj, [field]: 'not-a-uuid' });
+        const { status, json } = await ingest(payload);
+        expect(status).toBe(422);
+        expect(json.error).toMatchObject({ code: 'VALIDATION_ERROR', message: `${field} must be a UUID` });
+        if (field !== 'taskId') expect(await rowsForTask(payload.taskId as string)).toHaveLength(0);
+      },
+    );
   });
 
   describe('GET /documents/:documentId/download', () => {
@@ -255,6 +275,17 @@ describe.skipIf(!process.env.INTEGRATION)('platform documents routes (integratio
     it('returns 404 for an unknown document', async () => {
       const res = await h.request(`/documents/${uid()}/download`, { token: await h.userToken(member) });
       expect(res.status).toBe(404);
+    });
+
+    it('returns the same 404 as an unknown document for a malformed document id', async () => {
+      const res = await h.request('/documents/not-a-uuid/download', { token: await h.userToken(member) });
+      expect(res.status).toBe(404);
+      expect((await res.json()).error.code).toBe('NOT_FOUND');
+    });
+
+    it('returns 403 (not a 500) for a token whose subject is not a uuid', async () => {
+      const res = await h.request(`/documents/${documentId}/download`, { token: await h.userToken('not-a-uuid') });
+      expect(res.status).toBe(403);
     });
 
     it('rejects service tokens and missing tokens', async () => {

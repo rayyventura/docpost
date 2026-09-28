@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import crypto from 'node:crypto';
-import { CopyObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Readable } from 'node:stream';
+import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { AppError, NotFoundError } from '@docpost/shared';
 import {
   assertObjectMatchesIngest,
@@ -10,19 +11,24 @@ import {
   headStagingObject,
   hexSha256ToBase64,
   presignDocumentDownload,
+  sha256OfStagingObject,
   usesObjectStorage,
 } from './s3.js';
 
 const HEX = crypto.createHash('sha256').update('hello').digest('hex');
 const B64 = crypto.createHash('sha256').update('hello').digest('base64');
 
-function catchError(fn: () => void): unknown {
-  try {
-    fn();
-  } catch (err) {
-    return err;
-  }
-  throw new Error('expected function to throw');
+const KEY = 'uploads/job/file.pdf';
+
+// Every S3 call in this file goes through this spy; tests that need S3 queue responses.
+const send = vi.spyOn(S3Client.prototype, 'send');
+
+afterEach(() => {
+  send.mockReset();
+});
+
+function objectBody(...chunks: Array<string | Buffer>) {
+  return { Body: Readable.from(chunks.map((c) => Buffer.from(c))) } as never;
 }
 
 describe('hexSha256ToBase64', () => {
@@ -48,71 +54,160 @@ describe('hexSha256ToBase64', () => {
 });
 
 describe('assertObjectMatchesIngest', () => {
-  it('accepts a matching size and full-object checksum', () => {
-    expect(() =>
-      assertObjectMatchesIngest({ contentLength: 5, checksumSha256Base64: B64, checksumType: 'FULL_OBJECT' }, 5, HEX),
-    ).not.toThrow();
-  });
+  describe('full-object checksum fast path', () => {
+    it('accepts a matching size and full-object checksum without reading the object', async () => {
+      await expect(
+        assertObjectMatchesIngest(KEY, { contentLength: 5, checksumSha256Base64: B64, checksumType: 'FULL_OBJECT' }, 5, HEX),
+      ).resolves.toBeUndefined();
+      expect(send).not.toHaveBeenCalled();
+    });
 
-  it('throws a 422 CHECKSUM_MISMATCH AppError on size mismatch', () => {
-    const err = catchError(() => assertObjectMatchesIngest({ contentLength: 4 }, 5, HEX));
-    expect(err).toBeInstanceOf(AppError);
-    expect(err).toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
-    expect((err as Error).message).toBe('Declared size does not match. Expected 5, got 4');
-  });
-
-  it('checks size before checksum', () => {
-    expect(() =>
-      assertObjectMatchesIngest({ contentLength: 6, checksumSha256Base64: 'bogus', checksumType: 'FULL_OBJECT' }, 5, HEX),
-    ).toThrow(/Declared size/);
-  });
-
-  it('throws CHECKSUM_MISMATCH when the full-object checksum differs', () => {
-    const other = crypto.createHash('sha256').update('other').digest('base64');
-    const err = catchError(() =>
-      assertObjectMatchesIngest({ contentLength: 5, checksumSha256Base64: other, checksumType: 'FULL_OBJECT' }, 5, HEX),
-    );
-    expect(err).toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
-    expect((err as Error).message).toContain(HEX);
-  });
-
-  it('strips quotes around the reported checksum', () => {
-    expect(() =>
-      assertObjectMatchesIngest(
-        { contentLength: 5, checksumSha256Base64: `"${B64}"`, checksumType: 'FULL_OBJECT' },
+    it('throws CHECKSUM_MISMATCH when the full-object checksum differs, without reading the object', async () => {
+      const other = crypto.createHash('sha256').update('other').digest('base64');
+      const err = await assertObjectMatchesIngest(
+        KEY,
+        { contentLength: 5, checksumSha256Base64: other, checksumType: 'FULL_OBJECT' },
         5,
         HEX,
-      ),
-    ).not.toThrow();
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err).toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
+      expect((err as Error).message).toContain(HEX);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('strips quotes around the reported checksum', async () => {
+      await expect(
+        assertObjectMatchesIngest(
+          KEY,
+          { contentLength: 5, checksumSha256Base64: `"${B64}"`, checksumType: 'FULL_OBJECT' },
+          5,
+          HEX,
+        ),
+      ).resolves.toBeUndefined();
+    });
+
+    it('accepts an upper-case declared digest', async () => {
+      await expect(
+        assertObjectMatchesIngest(
+          KEY,
+          { contentLength: 5, checksumSha256Base64: B64, checksumType: 'FULL_OBJECT' },
+          5,
+          HEX.toUpperCase(),
+        ),
+      ).resolves.toBeUndefined();
+    });
   });
 
-  it('skips checksum comparison for COMPOSITE (multipart) checksums', () => {
-    expect(() =>
-      assertObjectMatchesIngest({ contentLength: 5, checksumSha256Base64: `${B64}-3`, checksumType: 'COMPOSITE' }, 5, HEX),
-    ).not.toThrow();
+  describe('size', () => {
+    it('throws a 422 CHECKSUM_MISMATCH AppError on size mismatch without reading the object', async () => {
+      const err = await assertObjectMatchesIngest(KEY, { contentLength: 4 }, 5, HEX).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err).toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
+      expect((err as Error).message).toBe('Declared size does not match. Expected 5, got 4');
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('checks size before checksum', async () => {
+      await expect(
+        assertObjectMatchesIngest(KEY, { contentLength: 6, checksumSha256Base64: 'bogus', checksumType: 'FULL_OBJECT' }, 5, HEX),
+      ).rejects.toThrow(/Declared size/);
+    });
+
+    it('treats a zero-length object as a size mismatch against any positive declared size', async () => {
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 0 }, 1, HEX)).rejects.toThrow(/Expected 1, got 0/);
+    });
   });
 
-  it('skips checksum comparison when S3 reports no checksum', () => {
-    expect(() => assertObjectMatchesIngest({ contentLength: 5 }, 5, HEX)).not.toThrow();
+  describe('streamed checksum (no full-object checksum from S3)', () => {
+    it.each([
+      ['S3 reports no checksum', { contentLength: 5 }],
+      ['S3 reports a checksum but no ChecksumType', { contentLength: 5, checksumSha256Base64: B64 }],
+      ['S3 reports a COMPOSITE (multipart) checksum', { contentLength: 5, checksumSha256Base64: `${B64}-3`, checksumType: 'COMPOSITE' }],
+    ])('streams the staged object and accepts a matching digest when %s', async (_label, info) => {
+      send.mockResolvedValueOnce(objectBody('hel', 'lo'));
+      await expect(assertObjectMatchesIngest(KEY, info, 5, HEX)).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledTimes(1);
+      const cmd = send.mock.calls[0][0] as GetObjectCommand;
+      expect(cmd).toBeInstanceOf(GetObjectCommand);
+      expect(cmd.input).toEqual({ Bucket: 'docpost-staging-local', Key: KEY });
+    });
+
+    it('rejects a differing checksum when ChecksumType is not reported', async () => {
+      // The stored bytes are 'other' (5 bytes), matching the checksum S3 reports.
+      const other = crypto.createHash('sha256').update('other').digest('base64');
+      send.mockResolvedValueOnce(objectBody('other'));
+      const err = await assertObjectMatchesIngest(KEY, { contentLength: 5, checksumSha256Base64: other }, 5, HEX).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AppError);
+      expect(err).toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
+      expect((err as Error).message).toMatch(/Declared checksum/);
+    });
+
+    it('rejects when the streamed bytes do not hash to the declared digest (COMPOSITE)', async () => {
+      send.mockResolvedValueOnce(objectBody('hellx'));
+      await expect(
+        assertObjectMatchesIngest(KEY, { contentLength: 5, checksumSha256Base64: `${B64}-2`, checksumType: 'COMPOSITE' }, 5, HEX),
+      ).rejects.toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
+    });
+
+    it('accepts an upper-case declared digest', async () => {
+      send.mockResolvedValueOnce(objectBody('hello'));
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, HEX.toUpperCase())).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ['NoSuchKey name', Object.assign(new Error('x'), { name: 'NoSuchKey' })],
+      ['404 status', Object.assign(new Error('x'), { name: 'Unknown', $metadata: { httpStatusCode: 404 } })],
+    ])('maps a missing object on GetObject (%s) to NotFoundError', async (_label, err) => {
+      send.mockRejectedValueOnce(err);
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, HEX)).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('maps a response without a body to NotFoundError', async () => {
+      send.mockResolvedValueOnce({} as never);
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, HEX)).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('rethrows a stream error mid-read unchanged', async () => {
+      const boom = new Error('socket hang up');
+      const body = new Readable({ read() {} });
+      body.push(Buffer.from('he'));
+      process.nextTick(() => body.destroy(boom));
+      send.mockResolvedValueOnce({ Body: body } as never);
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, HEX)).rejects.toBe(boom);
+    });
+
+    it('rethrows other GetObject errors unchanged', async () => {
+      const err = Object.assign(new Error('denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } });
+      send.mockRejectedValueOnce(err);
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, HEX)).rejects.toBe(err);
+    });
   });
 
-  it('skips checksum comparison when the declared checksum is not valid hex', () => {
-    expect(() =>
-      assertObjectMatchesIngest({ contentLength: 5, checksumSha256Base64: B64, checksumType: 'FULL_OBJECT' }, 5, 'xyz'),
-    ).not.toThrow();
-  });
+  it.each(['xyz', B64, ''])(
+    'rejects a declared checksum %j that is not a SHA-256 hex digest without reading the object',
+    async (declared) => {
+      await expect(
+        assertObjectMatchesIngest(KEY, { contentLength: 5, checksumSha256Base64: B64, checksumType: 'FULL_OBJECT' }, 5, declared),
+      ).rejects.toMatchObject({ code: 'CHECKSUM_MISMATCH', statusCode: 422 });
+      await expect(assertObjectMatchesIngest(KEY, { contentLength: 5 }, 5, declared)).rejects.toMatchObject({
+        code: 'CHECKSUM_MISMATCH',
+      });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+});
 
-  // GAP: when ChecksumType is absent (LocalStack, or objects without the header) a
-  // present, single-part ChecksumSHA256 is ignored even though it could be compared.
-  it.fails('rejects a differing checksum when ChecksumType is not reported', () => {
-    const other = crypto.createHash('sha256').update('other').digest('base64');
-    expect(() => assertObjectMatchesIngest({ contentLength: 5, checksumSha256Base64: other }, 5, HEX)).toThrow(
-      /Declared checksum/,
-    );
-  });
-
-  it('treats a zero-length object as a size mismatch against any positive declared size', () => {
-    expect(() => assertObjectMatchesIngest({ contentLength: 0 }, 1, HEX)).toThrow(/Expected 1, got 0/);
+describe('sha256OfStagingObject', () => {
+  it('hashes a large multi-chunk body incrementally', async () => {
+    const chunk = Buffer.alloc(1024 * 1024, 7);
+    const chunks = Array.from({ length: 8 }, () => chunk);
+    const expected = crypto.createHash('sha256');
+    chunks.forEach((c) => expected.update(c));
+    send.mockResolvedValueOnce({ Body: Readable.from(chunks) } as never);
+    await expect(sha256OfStagingObject(KEY)).resolves.toBe(expected.digest('hex'));
   });
 });
 
@@ -169,12 +264,6 @@ describe('usesObjectStorage', () => {
 });
 
 describe('S3 calls (mocked client)', () => {
-  const send = vi.spyOn(S3Client.prototype, 'send');
-
-  afterEach(() => {
-    send.mockReset();
-  });
-
   describe('headStagingObject', () => {
     it('HEADs the staging key with checksum mode and maps the response', async () => {
       send.mockResolvedValueOnce({ ContentLength: 42, ChecksumSHA256: B64, ChecksumType: 'FULL_OBJECT' } as never);

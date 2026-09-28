@@ -42,6 +42,11 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
       expect(res.status).toBe(404);
     });
 
+    it('returns the same 404 for a malformed team or user id', async () => {
+      expect((await h.request(`/teams/${teamId}/members/not-a-uuid`, { token: readToken })).status).toBe(404);
+      expect((await h.request(`/teams/not-a-uuid/members/${member}`, { token: readToken })).status).toBe(404);
+    });
+
     it('requires memberships:read on a service token', async () => {
       const wrongScope = await h.request(`/teams/${teamId}/members/${member}`, {
         token: await h.serviceToken('documents:ingest'),
@@ -53,9 +58,15 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
   });
 
   describe('team lookups', () => {
-    it('GET /teams/:teamId/members lists user ids', async () => {
+    it('GET /teams/:teamId/members lists user ids in id order', async () => {
       const res = await h.request(`/teams/${teamId}/members`, { token: readToken });
       expect(await res.json()).toEqual({ userIds: [member] });
+
+      const team = await h.fixtures.team();
+      const users = [uid(), uid(), uid()];
+      for (const user of users) await h.fixtures.member(team, user);
+      const many = await h.request(`/teams/${team}/members`, { token: readToken });
+      expect(await many.json()).toEqual({ userIds: [...users].sort() });
     });
 
     it('GET /internal/teams/:teamId returns the team or 404', async () => {
@@ -67,9 +78,15 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
       expect(invalid.status).toBe(422);
     });
 
-    it('GET /internal/users/:userId/teams lists team ids', async () => {
+    it('GET /internal/users/:userId/teams lists team ids in id order', async () => {
       const res = await h.request(`/internal/users/${member}/teams`, { token: readToken });
       expect(await res.json()).toEqual({ teamIds: [teamId] });
+
+      const user = uid();
+      const teamIds = [await h.fixtures.team(), await h.fixtures.team(), await h.fixtures.team()];
+      for (const team of teamIds) await h.fixtures.member(team, user);
+      const many = await h.request(`/internal/users/${user}/teams`, { token: readToken });
+      expect(await many.json()).toEqual({ teamIds: [...teamIds].sort() });
     });
   });
 
@@ -93,7 +110,10 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
       const again = await h.request(`/internal/users/${newUser}/memberships`, { method: 'POST', token: writeToken });
       expect(again.status).toBe(200);
       const rowsAgain = await getDb().select().from(teamMembers).where(eq(teamMembers.userId, newUser));
-      expect(rowsAgain).toHaveLength(rows.length);
+      // Other test files create teams concurrently, so only the teams that existed at
+      // the first call are compared: each must still have exactly one membership row.
+      const firstTeams = new Set(rows.map((r) => r.teamId));
+      expect(rowsAgain.filter((r) => firstTeams.has(r.teamId))).toHaveLength(rows.length);
     });
   });
 
@@ -115,6 +135,31 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
           { id: childFolderId, name: 'Consent' },
         ],
       });
+    });
+
+    it('resolves malformed ids to empty labels, like unknown ids, instead of failing', async () => {
+      const res = await h.request('/internal/destination-paths', {
+        method: 'POST',
+        token: readToken,
+        json: {
+          destinations: [
+            { teamId: 'not-a-uuid', binderId: 'nope', folderId: 'bad' },
+            { teamId, binderId, folderId: childFolderId },
+          ],
+        },
+      });
+      expect(res.status).toBe(200);
+      const { destinations } = await res.json();
+      expect(destinations[0]).toEqual({
+        teamId: 'not-a-uuid',
+        binderId: 'nope',
+        folderId: 'bad',
+        path: '',
+        teamName: '',
+        binderName: '',
+        folderPath: [],
+      });
+      expect(destinations[1].path).toBe('Oncology / Trials / Site A / Consent');
     });
   });
 
@@ -140,6 +185,19 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
         json: { destinations: [{ teamId: uid(), binderId, folderId: childFolderId }] },
       });
       expect(wrongTeam.status).toBe(422);
+
+      for (const destination of [
+        { teamId, binderId: 'not-a-uuid', folderId: childFolderId },
+        { teamId, binderId, folderId: 'not-a-uuid' },
+      ]) {
+        const malformed = await h.request('/internal/assert-folder-destinations', {
+          method: 'POST',
+          token: readToken,
+          json: { destinations: [destination] },
+        });
+        expect(malformed.status).toBe(422);
+        expect((await malformed.json()).error.code).toBe('VALIDATION_ERROR');
+      }
     });
   });
 });

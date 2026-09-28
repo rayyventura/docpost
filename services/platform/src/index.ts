@@ -1,11 +1,8 @@
+// Must stay the first import: later modules read configuration at import time.
+import './env.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
 import { createApp } from './app.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = createApp();
 const PORT = process.env.PORT ?? 3002;

@@ -1,9 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { ForbiddenError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { teamMembers, binders } from '../db/schema.js';
 import { requireUserAuth } from '../middleware/auth.js';
+import { isUuid } from '../lib/ids.js';
 
 const router = Router();
 
@@ -14,6 +15,11 @@ router.get(
     try {
       const userId = req.user!.sub;
       const teamId = req.params.teamId as string;
+
+      // Malformed ids get the same 403 as an unknown team (existence is not disclosed).
+      if (!isUuid(teamId) || !isUuid(userId)) {
+        throw new ForbiddenError();
+      }
 
       const db = getDb();
 
@@ -39,7 +45,8 @@ router.get(
           name: binders.name,
         })
         .from(binders)
-        .where(eq(binders.teamId, teamId));
+        .where(eq(binders.teamId, teamId))
+        .orderBy(asc(binders.name), asc(binders.id));
 
       res.json(teamBinders);
     } catch (err) {

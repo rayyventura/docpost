@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOLDER_DESTINATION_REQUIRED } from '@docpost/shared';
+import { FOLDER_DESTINATION_REQUIRED, ValidationError } from '@docpost/shared';
 import { assertStagingObjectKey, parseIngestBody } from './ingest.js';
 import { assertObjectMatchesIngest, copySource, hexSha256ToBase64 } from './s3.js';
 
@@ -39,22 +39,23 @@ describe('copySource', () => {
 });
 
 describe('assertObjectMatchesIngest', () => {
-  it('rejects a size mismatch without reading file bytes', () => {
-    expect(() =>
-      assertObjectMatchesIngest({ contentLength: 10 }, 11, valid.checksumSha256),
-    ).toThrow(/Declared size does not match/);
+  it('rejects a size mismatch without reading file bytes', async () => {
+    await expect(
+      assertObjectMatchesIngest(valid.s3Key, { contentLength: 10 }, 11, valid.checksumSha256),
+    ).rejects.toThrow(/Declared size does not match/);
   });
 
-  it('compares a full-object S3 checksum when present', () => {
+  it('compares a full-object S3 checksum when present', async () => {
     const checksum = hexSha256ToBase64(valid.checksumSha256);
     expect(checksum).toBeTruthy();
-    expect(() =>
+    await expect(
       assertObjectMatchesIngest(
+        valid.s3Key,
         { contentLength: valid.sizeBytes, checksumSha256Base64: checksum!, checksumType: 'FULL_OBJECT' },
         valid.sizeBytes,
         valid.checksumSha256,
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -100,6 +101,21 @@ describe('parseIngestBody edge cases', () => {
       expect(() => parseIngestBody({ ...valid, contentType })).toThrow(/Unsupported content type/);
     },
   );
+
+  it.each(['taskId', 'binderId', 'folderId', 'onBehalfOf'])('rejects a malformed %s with a ValidationError', (field) => {
+    for (const value of ['not-a-uuid', '1', `${valid[field as keyof typeof valid]}x`]) {
+      const err = (() => {
+        try {
+          parseIngestBody({ ...valid, [field]: value });
+        } catch (e) {
+          return e;
+        }
+        return undefined;
+      })();
+      expect(err).toBeInstanceOf(ValidationError);
+      expect(err).toMatchObject({ statusCode: 422, message: `${field} must be a UUID` });
+    }
+  });
 
   it('drops unknown fields from the parsed result', () => {
     expect(parseIngestBody({ ...valid, extra: 'x', uploadedByUserId: 'spoof' })).toEqual(valid);

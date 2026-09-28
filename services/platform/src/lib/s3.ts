@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppError, NotFoundError } from '@docpost/shared';
@@ -89,11 +90,45 @@ export function hexSha256ToBase64(hex: string): string | null {
   return Buffer.from(hex, 'hex').toString('base64');
 }
 
-export function assertObjectMatchesIngest(
+function checksumMismatch(checksumSha256: string): AppError {
+  return new AppError('CHECKSUM_MISMATCH', `Declared checksum does not match. Expected ${checksumSha256}`, 422);
+}
+
+/**
+ * SHA-256 (hex) of a staged object, computed by streaming GetObject so memory use
+ * stays flat regardless of object size.
+ */
+export async function sha256OfStagingObject(s3Key: string): Promise<string> {
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: s3Key }));
+    if (!res.Body) {
+      throw new NotFoundError('Source object was not found');
+    }
+    const hash = createHash('sha256');
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+      hash.update(chunk);
+    }
+    return hash.digest('hex');
+  } catch (err) {
+    if (isMissingObject(err)) {
+      throw new NotFoundError('Source object was not found');
+    }
+    throw err;
+  }
+}
+
+/**
+ * Rejects with 422 CHECKSUM_MISMATCH unless the staged object has the declared size
+ * and SHA-256. Size is checked first from the HEAD response. The checksum uses the
+ * full-object SHA-256 S3 reports when there is one; otherwise (multipart COMPOSITE
+ * checksums, or no checksum reported) the object is streamed and hashed.
+ */
+export async function assertObjectMatchesIngest(
+  s3Key: string,
   info: StagingObjectInfo,
   sizeBytes: number,
   checksumSha256: string,
-): void {
+): Promise<void> {
   if (info.contentLength !== sizeBytes) {
     throw new AppError(
       'CHECKSUM_MISMATCH',
@@ -103,14 +138,21 @@ export function assertObjectMatchesIngest(
   }
 
   const declared = hexSha256ToBase64(checksumSha256);
-  if (info.checksumSha256Base64 && info.checksumType === 'FULL_OBJECT' && declared) {
+  if (!declared) {
+    // Not a SHA-256 hex digest, so it cannot match any object.
+    throw checksumMismatch(checksumSha256);
+  }
+
+  if (info.checksumSha256Base64 && info.checksumType === 'FULL_OBJECT') {
     if (info.checksumSha256Base64.replace(/"/g, '') !== declared) {
-      throw new AppError(
-        'CHECKSUM_MISMATCH',
-        `Declared checksum does not match. Expected ${checksumSha256}`,
-        422,
-      );
+      throw checksumMismatch(checksumSha256);
     }
+    return;
+  }
+
+  const actual = await sha256OfStagingObject(s3Key);
+  if (actual !== checksumSha256.toLowerCase()) {
+    throw checksumMismatch(checksumSha256);
   }
 }
 
