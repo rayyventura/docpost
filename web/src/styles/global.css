@@ -103,9 +103,6 @@ body {
 
 .app-main {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   max-width: 1120px;
   width: 100%;
   margin: 0 auto;
@@ -486,15 +483,7 @@ body {
 }
 
 /* ===== Breadcrumb ===== */
-.distribute-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
 .destinations-page {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -516,9 +505,8 @@ body {
 }
 
 .destinations-content {
-  flex: 1;
+  height: min(36rem, calc(100vh - 18rem));
   min-height: 20rem;
-  height: auto;
 }
 
 .destinations-content .dest-tree {
@@ -635,6 +623,12 @@ body {
 .item-download {
   margin-left: auto;
   flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.item-download:hover:not(:disabled) {
+  color: var(--color-text);
 }
 
 .item-icon {
@@ -790,10 +784,7 @@ body {
 }
 
 .tab-panel--active {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  display: block;
 }
 
 @keyframes tabFadeIn {
@@ -809,10 +800,6 @@ body {
 
 /* ===== New Job Page ===== */
 .new-job-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   padding-top: 0.25rem;
 }
 
@@ -1066,9 +1053,8 @@ body {
   grid-template-rows: minmax(0, 1fr);
   gap: 1.5rem;
   margin-bottom: 1rem;
-  flex: 1;
+  height: min(36rem, calc(100vh - 18rem));
   min-height: 22rem;
-  height: auto;
   overflow: hidden;
 }
 
@@ -1386,12 +1372,12 @@ body {
 .tree-send-here {
   flex-shrink: 0;
   margin-left: 0.5rem;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   font-weight: 400;
 }
 
 .tree-send-here:hover {
-  color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 .tree-row--active {
@@ -1558,16 +1544,14 @@ body {
 
 /* ===== Job Dashboard ===== */
 .job-dashboard {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
   padding-top: 0.5rem;
 }
 
 .job-dashboard > .page-loading {
   flex: 1;
-  min-height: 12rem;
+  min-height: min(36rem, calc(100vh - 18rem));
   height: auto;
 }
 

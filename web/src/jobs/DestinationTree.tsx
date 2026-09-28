@@ -37,6 +37,26 @@ function destKey(d: { teamId: string; binderId?: string | null; folderId?: strin
   return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
 }
 
+function folderAncestorPath(
+  folder: FolderNode,
+  foldersByParent: Map<string, FolderNode[]>,
+): Array<{ id: string; name: string }> {
+  const byId = new Map<string, FolderNode>();
+  for (const nodes of foldersByParent.values()) {
+    for (const node of nodes) byId.set(node.id, node);
+  }
+
+  const path: Array<{ id: string; name: string }> = [];
+  const seen = new Set<string>();
+  let current: FolderNode | undefined = folder;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    path.unshift({ id: current.id, name: current.name });
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return path;
+}
+
 function Expander({
   loading,
   expandable,
@@ -472,6 +492,7 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
         binderName: folder.binderName,
         folderId: folder.id,
         folderName: folder.name,
+        folderPath: folderAncestorPath(folder, foldersByParent),
       };
 
       return (

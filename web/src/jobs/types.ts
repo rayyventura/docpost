@@ -5,6 +5,7 @@ export interface Destination {
   binderName: string;
   folderId?: string;
   folderName?: string;
+  folderPath?: FolderPathSegment[];
 }
 
 export interface SendLocationState {
@@ -51,6 +52,7 @@ export interface FilesLocationState {
   teamName: string;
   binderId: string;
   binderName: string;
+  folderId?: string;
   folderPath?: FolderPathSegment[];
   documentId?: string;
   fileName?: string;

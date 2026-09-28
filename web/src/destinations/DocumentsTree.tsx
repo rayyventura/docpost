@@ -134,8 +134,17 @@ function sendTargetFor(
     binderName: folder.binderName,
     folderId: folder.id,
     folderName: folder.name,
+    folderPath: folderPath.map((id) => ({
+      id,
+      name: id === folder.id ? folder.name : '',
+    })),
   };
   return { destination, folderPath };
+}
+
+function folderSegmentId(segment: { id?: string } | string | undefined): string | undefined {
+  if (!segment) return undefined;
+  return typeof segment === 'string' ? segment : segment.id;
 }
 
 export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
@@ -354,9 +363,12 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
         let siblings = binderContents.folders;
         let selected: FolderNode | undefined;
         let currentContents = binderContents;
+        let openedTarget = path.length === 0 && !reveal.folderId;
 
         for (const [index, segment] of path.entries()) {
-          const folder = siblings.find((item) => item.id === segment.id);
+          const segmentId = folderSegmentId(segment);
+          if (!segmentId) break;
+          const folder = siblings.find((item) => item.id === segmentId);
           if (!folder) break;
           selected = folder;
           const isLast = index === path.length - 1;
@@ -378,10 +390,33 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
           setExpandedFolders((prev) => new Set(prev).add(folder.id));
           siblings = childContents.folders;
           currentContents = childContents;
-          if (isLast) break;
+          if (isLast) {
+            openedTarget = true;
+            break;
+          }
         }
 
-        if (selected) {
+        const leafId = folderSegmentId(path[path.length - 1]) ?? reveal.folderId;
+        if (!openedTarget && leafId) {
+          const childKey = `folder:${leafId}`;
+          currentContents = await loadContents(
+            childKey,
+            `/destinations/folders/${leafId}/contents`,
+            (child) => ({
+              id: child.id,
+              name: child.name,
+              binderId: binder.id,
+              binderName: binder.name,
+              teamId: binder.teamId,
+              teamName: binder.teamName,
+              parentId: leafId,
+            }),
+          );
+          if (cancelled) return;
+          setExpandedFolders((prev) => new Set(prev).add(leafId));
+          setActiveFolderId(leafId);
+          openedTarget = true;
+        } else if (selected) {
           setActiveFolderId(selected.id);
         }
 
@@ -394,7 +429,7 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
         if (match) {
           setFocusDocumentId(match.id);
           setDownloadError('');
-        } else if (reveal.documentId || reveal.fileName) {
+        } else if (openedTarget && (reveal.documentId || reveal.fileName)) {
           setFocusDocumentId(null);
           setDownloadError('Document not found');
         } else {
