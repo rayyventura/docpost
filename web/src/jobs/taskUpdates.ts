@@ -96,6 +96,14 @@ export function mergeFetchedTasks(current: TaskDetail[], fetched: TaskDetail[]):
   });
 }
 
+export function firstTaskIdForStatus(tasks: Array<{ taskId: string; status: string }>, status: string): string | null {
+  const match = tasks.find((task) => {
+    if (task.status === status) return true;
+    return status === 'pending' && task.status === 'uploading';
+  });
+  return match?.taskId ?? null;
+}
+
 export function applyJobCounts(
   current: JobSummary['counts'],
   previousStatus: string | undefined,
