@@ -140,9 +140,11 @@ export function NewJobPage() {
                 teamName: destination.teamName,
                 binderName: destination.binderName,
                 folderPath:
-                  destination.folderId && destination.folderName
-                    ? [{ id: destination.folderId, name: destination.folderName }]
-                    : [],
+                  destination.folderPath && destination.folderPath.length > 0
+                    ? destination.folderPath
+                    : destination.folderId && destination.folderName
+                      ? [{ id: destination.folderId, name: destination.folderName }]
+                      : [],
               })),
           ),
         },

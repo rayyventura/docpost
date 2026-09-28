@@ -120,7 +120,12 @@ function statusClass(status: string): string {
 }
 
 function documentsLocation(task: TaskDetail): FilesLocationState | null {
-  if (task.status === 'failed' || task.status === 'pending' || task.status === 'uploading') {
+  if (
+    task.status === 'failed' ||
+    task.status === 'pending' ||
+    task.status === 'uploading' ||
+    task.status === 'in_progress'
+  ) {
     return null;
   }
   if (!task.teamId || !task.binderId || !task.teamName || !task.binderName) {
@@ -132,6 +137,7 @@ function documentsLocation(task: TaskDetail): FilesLocationState | null {
     teamName: task.teamName,
     binderId: task.binderId,
     binderName: task.binderName,
+    folderId: task.folderId ?? undefined,
     folderPath: task.folderPath ?? [],
     documentId: task.platformDocumentId ?? undefined,
     fileName: task.fileName ?? undefined,
