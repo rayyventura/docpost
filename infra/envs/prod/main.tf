@@ -221,11 +221,33 @@ module "ecs_platform" {
     DATABASE_URL = module.rds.secret_arns["platform_service"]
   }
 
+  task_role_policy_arns = [aws_iam_policy.platform_runtime.arn]
+
   environment_variables = {
     NODE_ENV      = var.environment
     PORT          = "3000"
+    AWS_REGION    = var.region
     AUTH_JWKS_URL = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
+    S3_BUCKET     = module.s3.staging_bucket_name
   }
+}
+
+resource "aws_iam_policy" "platform_runtime" {
+  name = "${var.project_name}-${var.environment}-platform-runtime"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+        ]
+        Resource = "${module.s3.staging_bucket_arn}/documents/*"
+      },
+    ]
+  })
 }
 
 resource "aws_iam_policy" "docpost_api_runtime" {

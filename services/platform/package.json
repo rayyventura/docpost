@@ -17,6 +17,7 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "latest",
     "@docpost/shared": "*",
     "dotenv": "latest",
     "drizzle-orm": "latest",

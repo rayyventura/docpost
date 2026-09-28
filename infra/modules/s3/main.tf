@@ -92,8 +92,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "staging" {
   bucket = aws_s3_bucket.staging[0].id
 
   rule {
-    id     = "delete-after-30-days"
+    id     = "delete-uploads-after-30-days"
     status = "Enabled"
+
+    filter {
+      prefix = "uploads/"
+    }
 
     expiration {
       days = 30
