@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { CryptoKey, JWK } from 'jose';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { closeDb, getDb } from '../db/index.js';
 import { binders, documents, folders, teamMembers, teams } from '../db/schema.js';
 
@@ -48,6 +48,29 @@ function closeServer(server: http.Server): Promise<void> {
     server.close(() => resolve());
     server.closeAllConnections();
   });
+}
+
+/**
+ * Advisory-lock key that serialises deleting fixture teams against tests that write
+ * to *every* team (POST /internal/users/:userId/memberships). Test files run in
+ * parallel against one database, so without it such a test can read another file's
+ * team, that file can clear the team's memberships, and the grant can then insert a
+ * fresh membership just before the team row is deleted (FK 23503 in cleanup), or
+ * the team can vanish between the grant's read and its insert (FK 23503 in the route).
+ */
+const TEAM_DELETION_LOCK = 0x64706974; // arbitrary, test-only
+
+/**
+ * Run `fn` while no harness can delete its teams. Use it around calls that touch
+ * teams created by other, concurrently running test files.
+ */
+export async function withTeamDeletionBlocked<T>(fn: () => Promise<T>): Promise<T> {
+  let result: T;
+  await getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock_shared(${TEAM_DELETION_LOCK})`);
+    result = await fn();
+  });
+  return result!;
 }
 
 export function uid(): string {
@@ -159,21 +182,51 @@ export class Fixtures {
     return { bytes, contentType: out.ContentType };
   }
 
+  /**
+   * Remove everything this file created. Every delete is scoped to entities this
+   * instance created (or rows referencing them), and each parent is deleted only
+   * after all of its FK children, including rows another test or the service added:
+   *   documents -> folders (binder_id, parent_folder_id), binders
+   *   folders   -> binders
+   *   binders, team_members -> teams
+   */
   async cleanup(): Promise<void> {
     const db = getDb();
     for (const key of this.objectKeys) {
       await this.s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key })).catch(() => undefined);
     }
-    if (this.documentIds.length) {
-      await db.delete(documents).where(inArray(documents.id, this.documentIds));
+
+    // Binders in our teams may have been created by the service rather than a fixture.
+    const binderIds = new Set(this.binderIds);
+    if (this.teamIds.length) {
+      const rows = await db.select({ id: binders.id }).from(binders).where(inArray(binders.teamId, this.teamIds));
+      for (const row of rows) binderIds.add(row.id);
     }
-    // Delete child folders before their parents (reverse creation order).
-    for (const folderId of [...this.folderIds].reverse()) {
-      await db.delete(folders).where(eq(folders.id, folderId));
+    const folderIds = new Set(this.folderIds);
+    if (binderIds.size) {
+      const rows = await db
+        .select({ id: folders.id })
+        .from(folders)
+        .where(inArray(folders.binderId, [...binderIds]));
+      for (const row of rows) folderIds.add(row.id);
     }
-    if (this.binderIds.length) {
-      await db.delete(binders).where(inArray(binders.id, this.binderIds));
+
+    const documentFilters = [];
+    if (this.documentIds.length) documentFilters.push(inArray(documents.id, this.documentIds));
+    if (binderIds.size) documentFilters.push(inArray(documents.binderId, [...binderIds]));
+    if (folderIds.size) documentFilters.push(inArray(documents.folderId, [...folderIds]));
+    if (documentFilters.length) {
+      await db.delete(documents).where(or(...documentFilters));
     }
+    // One statement, so parent/child folders need no ordering: the self-referencing
+    // FK is checked once the whole statement has run.
+    if (folderIds.size) {
+      await db.delete(folders).where(inArray(folders.id, [...folderIds]));
+    }
+    if (binderIds.size) {
+      await db.delete(binders).where(inArray(binders.id, [...binderIds]));
+    }
+
     for (const { teamId, userId } of this.memberships) {
       await db
         .delete(teamMembers)
@@ -183,8 +236,15 @@ export class Fixtures {
       await db.delete(teamMembers).where(inArray(teamMembers.userId, this.memberUserIds));
     }
     if (this.teamIds.length) {
-      await db.delete(teamMembers).where(inArray(teamMembers.teamId, this.teamIds));
-      await db.delete(teams).where(inArray(teams.id, this.teamIds));
+      const teamIds = this.teamIds;
+      // Clear every membership of our teams (other files add some, e.g. the
+      // every-team grant) and delete the teams atomically, while no every-team
+      // writer is mid-flight (see TEAM_DELETION_LOCK).
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${TEAM_DELETION_LOCK})`);
+        await tx.delete(teamMembers).where(inArray(teamMembers.teamId, teamIds));
+        await tx.delete(teams).where(inArray(teams.id, teamIds));
+      });
     }
   }
 }

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { teamMembers } from '../db/schema.js';
 import type { Harness } from '../test/harness.js';
-import { startHarness, uid } from '../test/harness.js';
+import { startHarness, uid, withTeamDeletionBlocked } from '../test/harness.js';
 
 describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integration)', () => {
   let h: Harness;
@@ -99,17 +99,24 @@ describe.skipIf(!process.env.INTEGRATION)('platform service-token routes (integr
       expect(denied.status).toBe(403);
 
       const writeToken = await h.serviceToken('memberships:write');
-      const first = await h.request(`/internal/users/${newUser}/memberships`, { method: 'POST', token: writeToken });
+      // The route writes to every team, including other files' teams, so hold off
+      // their cleanup until it is done (otherwise either side can hit FK 23503).
+      const { first, rows, again, rowsAgain } = await withTeamDeletionBlocked(async () => {
+        const first = await h.request(`/internal/users/${newUser}/memberships`, { method: 'POST', token: writeToken });
+        const rows = await getDb().select().from(teamMembers).where(eq(teamMembers.userId, newUser));
+        const again = await h.request(`/internal/users/${newUser}/memberships`, { method: 'POST', token: writeToken });
+        const rowsAgain = await getDb().select().from(teamMembers).where(eq(teamMembers.userId, newUser));
+        // Drop the user's rows before other files may delete their teams again.
+        await getDb().delete(teamMembers).where(eq(teamMembers.userId, newUser));
+        return { first, rows, again, rowsAgain };
+      });
+
       expect(first.status).toBe(200);
       const { assigned } = await first.json();
       expect(assigned).toBeGreaterThanOrEqual(1);
-
-      const rows = await getDb().select().from(teamMembers).where(eq(teamMembers.userId, newUser));
       expect(rows.map((r) => r.teamId)).toContain(teamId);
 
-      const again = await h.request(`/internal/users/${newUser}/memberships`, { method: 'POST', token: writeToken });
       expect(again.status).toBe(200);
-      const rowsAgain = await getDb().select().from(teamMembers).where(eq(teamMembers.userId, newUser));
       // Other test files create teams concurrently, so only the teams that existed at
       // the first call are compared: each must still have exactly one membership row.
       const firstTeams = new Set(rows.map((r) => r.teamId));
