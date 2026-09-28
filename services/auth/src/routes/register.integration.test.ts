@@ -88,12 +88,11 @@ describe.skipIf(!process.env.INTEGRATION)('POST /auth/register (integration)', (
     expect(await getDb().select().from(users).where(eq(users.email, email))).toHaveLength(0);
   });
 
-  // BUG: registration does check-then-insert without handling the unique-violation race. Two
-  // concurrent registrations for the same new email both pass the SELECT, one INSERT wins and the
-  // loser surfaces Postgres 23505 as a 500 INTERNAL_ERROR instead of the documented 409.
+  // Registration does check-then-insert. Two concurrent registrations for the same new email both
+  // pass the SELECT and one INSERT wins; the loser's Postgres 23505 must map to the documented 409.
   // To make the interleaving deterministic, a separate connection holds a lock on `users` that lets
   // SELECTs through but blocks INSERTs until both requests are waiting on it.
-  it.fails('returns 409 (not 500) to the loser of a concurrent duplicate registration', async () => {
+  it('returns 409 (not 500) to the loser of a concurrent duplicate registration', async () => {
     const email = h.uniqueEmail('race');
     const locker = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await locker.connect();
@@ -127,5 +126,8 @@ describe.skipIf(!process.env.INTEGRATION)('POST /auth/register (integration)', (
     }
 
     expect(attempts.map((a) => a.status).sort()).toEqual([201, 409]);
+    const loser = attempts.find((a) => a.status === 409)!;
+    expect(loser.body).toEqual({ error: { code: 'CONFLICT', message: 'Registration failed' } });
+    expect(await getDb().select().from(users).where(eq(users.email, email))).toHaveLength(1);
   }, 30_000);
 });

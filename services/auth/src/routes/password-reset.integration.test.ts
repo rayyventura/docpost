@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, t
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { passwordResetTokens } from '../db/schema.js';
+import { passwordResetTokens, refreshTokens } from '../db/schema.js';
 import { postJson } from '../testing/http.js';
 import { startIntegrationHarness, type IntegrationHarness } from '../testing/integration.js';
 
@@ -47,6 +47,14 @@ describe.skipIf(!process.env.INTEGRATION)('password reset (integration)', () => 
 
   async function reset(token: string, password: string) {
     return postJson<ErrorBody>(h.baseUrl, '/auth/password/reset', { token, password });
+  }
+
+  async function login(email: string, password: string) {
+    return postJson<{ refreshToken: string }>(h.baseUrl, '/auth/login', { email, password });
+  }
+
+  async function refresh(refreshToken: string) {
+    return postJson<ErrorBody>(h.baseUrl, '/auth/refresh', { refreshToken });
   }
 
   async function loginStatus(email: string, password: string) {
@@ -138,8 +146,32 @@ describe.skipIf(!process.env.INTEGRATION)('password reset (integration)', () => 
     expect(res.status).toBe(422);
   });
 
-  // Not specified by the blueprint, but worth a decision: resetting a password does not revoke the
-  // user's existing refresh tokens, so a session opened by whoever knew the old password keeps
-  // refreshing for up to 7 days after the reset.
-  it.todo('revokes existing refresh tokens when the password is reset');
+  // Decision: a password reset signs out every existing session, so a session opened by whoever knew
+  // the old password cannot keep refreshing for up to 7 days after the reset.
+  it('revokes existing refresh tokens when the password is reset', async () => {
+    const user = await h.registerUser();
+    const other = await h.registerUser();
+    const sessions = await Promise.all([login(user.email, user.password), login(user.email, user.password)]);
+    const otherSession = await login(other.email, other.password);
+    for (const s of [...sessions, otherSession]) expect(s.status).toBe(200);
+
+    await requestReset(user.email);
+    expect((await reset(emailedTokenFor(user.email), 'post-reset-password')).status).toBe(200);
+
+    const rows = await getDb().select().from(refreshTokens).where(eq(refreshTokens.userId, user.id));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.revokedAt).toBeInstanceOf(Date);
+
+    for (const s of sessions) {
+      const res = await refresh(s.body.refreshToken);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('UNAUTHORIZED');
+    }
+
+    // Other users' sessions are untouched, and the new password opens a fresh, refreshable session.
+    expect((await refresh(otherSession.body.refreshToken)).status).toBe(200);
+    const fresh = await login(user.email, 'post-reset-password');
+    expect(fresh.status).toBe(200);
+    expect((await refresh(fresh.body.refreshToken)).status).toBe(200);
+  });
 });

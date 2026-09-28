@@ -60,17 +60,20 @@ describe('createApp', () => {
     consoleError.mockRestore();
   });
 
-  // BUG: express.json() raises a SyntaxError with status 400 for a malformed body, but the shared
-  // errorHandler only maps AppError and 413, so a client error is reported as 500 INTERNAL_ERROR
-  // (and logged as an unhandled server error). Fix belongs in packages/shared error-handler.
-  it.fails('returns 400 (not 500) for a malformed JSON body', async () => {
+  // express.json() raises a SyntaxError (type 'entity.parse.failed', status 400) for a malformed
+  // body; the shared errorHandler maps it to a 400 client error instead of an unhandled 500.
+  it('returns 400 INVALID_JSON (not 500) for a malformed JSON body, without logging it as unhandled', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await fetch(`${server.baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{"email": ',
     });
+    const body = await res.json();
+    const logged = consoleError.mock.calls.length;
     consoleError.mockRestore();
     expect(res.status).toBe(400);
+    expect(body).toEqual({ error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' } });
+    expect(logged).toBe(0);
   });
 });

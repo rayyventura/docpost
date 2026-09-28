@@ -26,6 +26,10 @@ router.post('/auth/token', async (req: Request, res: Response, next: NextFunctio
     }
 
     const { clientId, clientSecret, scope } = parseResult.data;
+    const requestedScopes = scope.split(' ').filter((s) => s.trim() !== '');
+    if (requestedScopes.length === 0) {
+      throw new ValidationError('scope is required');
+    }
     const db = getDb();
 
     const [client] = await db
@@ -43,7 +47,6 @@ router.post('/auth/token', async (req: Request, res: Response, next: NextFunctio
     }
 
     // Validate requested scopes are a subset of allowed scopes
-    const requestedScopes = scope.split(' ').filter(Boolean);
     const allowedScopes = new Set(client.scopes);
     const invalidScopes = requestedScopes.filter((s) => !allowedScopes.has(s));
 

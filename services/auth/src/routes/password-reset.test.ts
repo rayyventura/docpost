@@ -136,6 +136,10 @@ describe('POST /auth/password/reset', () => {
     expect(sets[0]).toEqual({ usedAt: expect.any(Date) });
     const { passwordHash } = sets[1] as { passwordHash: string };
     expect(await bcrypt.compare('brand-new-password', passwordHash)).toBe(true);
+    // Every active refresh token is revoked inside the same transaction.
+    expect(sets[2]).toEqual({ revokedAt: expect.any(Date) });
+    expect(db.argsOf('update')).toHaveLength(3);
+    expect(db.argsOf('transaction')).toHaveLength(1);
   });
 
   it('returns 401 for an unknown, used or expired token', async () => {

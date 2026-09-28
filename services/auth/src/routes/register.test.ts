@@ -104,6 +104,32 @@ describe('POST /auth/register', () => {
     expect(platformFetch).not.toHaveBeenCalled();
   });
 
+  it('returns the same 409 when the insert loses a race on users.email (unique violation 23505)', async () => {
+    const pgError = Object.assign(new Error('duplicate key value violates unique constraint "users_email_unique"'), {
+      code: '23505',
+      constraint: 'users_email_unique',
+    });
+    // Drizzle wraps driver errors, keeping the pg error as `cause`.
+    db.queue([], Object.assign(new Error('Failed query: insert into "users"'), { cause: pgError }));
+
+    const res = await postJson<{ error: { code: string; message: string } }>(server.baseUrl, '/auth/register', valid);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toEqual({ code: 'CONFLICT', message: 'Registration failed' });
+    expect(platformFetch).not.toHaveBeenCalled();
+    expect(db.argsOf('delete')).toHaveLength(0);
+  });
+
+  it('still returns 500 for a unique violation on some other constraint', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    db.queue([], Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'users_pkey' }));
+
+    const res = await postJson<{ error: { code: string } }>(server.baseUrl, '/auth/register', valid);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error.code).toBe('INTERNAL_ERROR');
+  });
+
   it('rolls back the new user and returns 500 when team assignment fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     platformFetch.mockResolvedValue(new Response('boom', { status: 503 }));

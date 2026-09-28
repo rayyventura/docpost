@@ -123,17 +123,23 @@ describe('POST /auth/token', () => {
     expect(res.status).toBe(401);
   });
 
-  // BUG: `scope` is required, but a whitespace-only value passes `z.string().min(1)` and then
-  // splits to zero scopes, so the client gets a valid service JWT with `scope: ""` instead of a 422.
-  it.fails('rejects a whitespace-only scope with 422', async () => {
-    db.queue([client]);
-    const res = await postJson(server.baseUrl, '/auth/token', {
-      clientId: client.clientId,
-      clientSecret: secret,
-      scope: '   ',
-    });
-    expect(res.status).toBe(422);
-  });
+  // `scope` is required: a whitespace-only value passes `z.string().min(1)` but splits to zero
+  // scopes, so it must be rejected like a missing scope rather than minting a `scope: ""` token.
+  it.each([['spaces', '   '], ['tab and newline', ' \t\n ']])(
+    'rejects a whitespace-only scope (%s) with 422 and issues no token',
+    async (_label, scope) => {
+      db.queue([client]);
+      const res = await postJson<ErrorBody & { accessToken?: string }>(server.baseUrl, '/auth/token', {
+        clientId: client.clientId,
+        clientSecret: secret,
+        scope,
+      });
+      expect(res.status).toBe(422);
+      expect(res.body.error).toEqual({ code: 'VALIDATION_ERROR', message: 'scope is required' });
+      expect(res.body.accessToken).toBeUndefined();
+      expect(db.calls).toHaveLength(0);
+    },
+  );
 
   it.each([
     ['clientId', { clientSecret: secret, scope: 'documents:ingest' }],
