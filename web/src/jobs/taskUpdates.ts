@@ -104,6 +104,24 @@ export function firstTaskIdForStatus(tasks: Array<{ taskId: string; status: stri
   return match?.taskId ?? null;
 }
 
+export function countSegmentAction(input: {
+  status: string;
+  count: number;
+  statusFilter: string;
+  taskPage: number;
+  matchOnPage: boolean;
+}): 'noop' | 'reveal' | 'filter' {
+  if (input.count <= 0) return 'noop';
+  if (
+    input.matchOnPage &&
+    input.taskPage === 1 &&
+    (input.statusFilter === '' || input.statusFilter === input.status)
+  ) {
+    return 'reveal';
+  }
+  return 'filter';
+}
+
 export function applyJobCounts(
   current: JobSummary['counts'],
   previousStatus: string | undefined,
