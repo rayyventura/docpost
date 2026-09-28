@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyJobCounts, applyTaskUpdate, countSegmentAction, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import type { TaskDetail } from './types';
+import { formatFailureReason } from './failureMessages';
 
 function task(overrides: Partial<TaskDetail>): TaskDetail {
   return {
@@ -83,6 +84,40 @@ describe('failure reasons', () => {
     expect(mergeFetchedTasks([], fetched)[0].failureReason).toBe(platformReason);
     const seeded = [task({ taskId: 'pending-job-0' })];
     expect(mergeFetchedTasks(seeded, fetched)[0].failureReason).toBe(platformReason);
+  });
+});
+
+describe('DELIVERY_REJECTED failure reasons', () => {
+  const rejected = `DELIVERY_REJECTED ${JSON.stringify({
+    fileName: 'note.pdf',
+    status: '400',
+    code: 'VALIDATION_ERROR',
+    reason: 'folderId must be a UUID',
+  })}`;
+  const expected = 'The document platform rejected this file (400 VALIDATION_ERROR): folderId must be a UUID';
+
+  it('renders a friendly message for a task from the initial GET /jobs/:id/tasks load', () => {
+    const fetched = [task({ taskId: 'real-1', status: 'failed', attemptCount: 1, failureReason: rejected })];
+    const [row] = mergeFetchedTasks([task({ taskId: 'pending-job-0' })], fetched);
+    expect(row.failureReason).toBe(rejected);
+    expect(formatFailureReason(row.failureReason!)).toBe(expected);
+  });
+
+  it('renders a friendly message for a live task_update push', () => {
+    const rows = [task({ taskId: 'real-1', status: 'in_progress', attemptCount: 1 })];
+    const { tasks: [row] } = applyTaskUpdate(rows, { taskId: 'real-1', status: 'failed', failureReason: rejected });
+    expect(row.status).toBe('failed');
+    expect(formatFailureReason(row.failureReason!)).toBe(expected);
+  });
+
+  it('renders a live push without a platform code', () => {
+    const noCode = `DELIVERY_REJECTED ${JSON.stringify({ fileName: 'note.pdf', status: '415', reason: 'Unsupported Media Type' })}`;
+    const { tasks: [row] } = applyTaskUpdate([task({ taskId: 'real-1', status: 'in_progress' })], {
+      taskId: 'real-1',
+      status: 'failed',
+      failureReason: noCode,
+    });
+    expect(formatFailureReason(row.failureReason!)).toBe('The document platform rejected this file (415): Unsupported Media Type');
   });
 });
 

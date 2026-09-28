@@ -32,6 +32,8 @@ export function formatFailureReason(raw: string): string {
     parsed.values.reason = 'The delivery worker stopped after the maximum number of retries';
   }
 
+  if (parsed.code === 'DELIVERY_REJECTED') return deliveryRejected(parsed.values);
+
   const detail = underlyingError(parsed.code, parsed.values);
   const template = messages[parsed.code];
   if (!template) {
@@ -47,6 +49,18 @@ export function formatFailureReason(raw: string): string {
     return raw;
   }
   return detail ? `${friendly}. ${detail}` : friendly;
+}
+
+/**
+ * Terminal platform 4xx recorded by the delivery worker as
+ * `DELIVERY_REJECTED {"fileName","status","code"?,"reason"?}`. `code` is absent when the
+ * platform's body was not JSON; `reason` is the platform's (sanitised) message.
+ */
+function deliveryRejected(values: Values): string {
+  const text = (v: unknown) => (typeof v === 'number' || (typeof v === 'string' && v.trim()) ? String(v).trim() : '');
+  const head = [text(values.status), text(values.code)].filter(Boolean).join(' ');
+  const reason = text(values.reason ?? values.message);
+  return `The document platform rejected this file${head ? ` (${head})` : ''}${reason ? `: ${reason}` : ''}`;
 }
 
 /**

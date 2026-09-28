@@ -80,6 +80,34 @@ describe('formatFailureReason', () => {
     });
   });
 
+  describe('DELIVERY_REJECTED (terminal platform 4xx from the delivery worker)', () => {
+    it('shows status, platform code and reason', () => {
+      expect(
+        formatFailureReason(
+          reason('DELIVERY_REJECTED', { fileName: 'a.pdf', status: '400', code: 'VALIDATION_ERROR', reason: 'name is required' }),
+        ),
+      ).toBe('The document platform rejected this file (400 VALIDATION_ERROR): name is required');
+    });
+
+    it('handles a missing code (non-JSON platform body)', () => {
+      expect(
+        formatFailureReason(reason('DELIVERY_REJECTED', { fileName: 'a.pdf', status: '413', reason: 'Payload Too Large' })),
+      ).toBe('The document platform rejected this file (413): Payload Too Large');
+    });
+
+    it('handles a missing reason', () => {
+      expect(formatFailureReason(reason('DELIVERY_REJECTED', { fileName: 'a.pdf', status: '400' }))).toBe(
+        'The document platform rejected this file (400)',
+      );
+    });
+
+    it('never shows the raw JSON', () => {
+      const out = formatFailureReason(reason('DELIVERY_REJECTED', { fileName: 'a.pdf', status: '409', code: 'CONFLICT', reason: 'x' }));
+      expect(out).not.toContain('{');
+      expect(out).not.toContain('DELIVERY_REJECTED');
+    });
+  });
+
   it('shows anything unparseable as recorded', () => {
     expect(formatFailureReason('File record 123 not found')).toBe('File record 123 not found');
     expect(formatFailureReason('WEIRD {not json}')).toBe('WEIRD {not json}');
