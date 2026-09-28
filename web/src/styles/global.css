@@ -453,6 +453,12 @@ body {
 }
 
 /* ===== Breadcrumb ===== */
+.destinations-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .destinations-toolbar {
   display: flex;
   align-items: center;
@@ -460,6 +466,21 @@ body {
   flex-wrap: wrap;
   gap: 1rem;
   margin-bottom: 1.25rem;
+}
+
+.destinations-path {
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.destinations-content {
+  height: min(36rem, calc(100vh - 18rem));
+  min-height: 20rem;
+}
+
+.destinations-content .dest-tree {
+  height: 100%;
 }
 
 .destinations-toolbar .breadcrumb {
@@ -1501,6 +1522,7 @@ body {
   text-transform: capitalize;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 .status-pending {
