@@ -2,10 +2,12 @@ import { useState, useCallback, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { SidebarTree } from '../layout/SidebarTree';
 import { FilePicker, fileContentType } from './FilePicker';
 import { DestinationTree } from './DestinationTree';
 import { startJobUploads } from './jobUploads';
 import type { SelectedFile, Destination, JobSubmitResponse, SendLocationState } from './types';
+import { tooManyDestinationsMessage, totalSupportedDestinations } from './destinationLimit';
 
 function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
   return `${d.teamId}:${d.binderId ?? ''}:${d.folderId ?? ''}`;
@@ -29,6 +31,8 @@ export function NewJobPage() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
 
+  const destinationLimit = totalSupportedDestinations();
+
   useEffect(() => {
     const seed = location.state as SendLocationState | null;
     if (!seed?.destination?.binderId || !seed.destination.folderId) return;
@@ -37,10 +41,14 @@ export function NewJobPage() {
       if (current.some((destination) => destKey(destination) === destKey(seed.destination))) {
         return current;
       }
+      if (current.length >= destinationLimit) {
+        setError(tooManyDestinationsMessage(destinationLimit));
+        return current;
+      }
       return [...current, seed.destination];
     });
     setRevealFolderPath(seed.folderPath ?? []);
-  }, [location.key, location.state]);
+  }, [location.key, location.state, destinationLimit]);
 
   const handleFilesAdded = useCallback((newFiles: SelectedFile[]) => {
     if (newFiles.length > 0) {
@@ -155,82 +163,98 @@ export function NewJobPage() {
     }
   }, [readyFiles, destinations, files, navigate, user?.name]);
 
+  const onSend = location.pathname === '/send';
+
   return (
     <div className="new-job-page">
-      <p className="page-lead">
-        Choose where each document should be placed in the destination hierarchy.
-        <br />
-        Authorized users will be able to download it from Documents.
-      </p>
-      <div className="distribute-panels">
-        <div className={`panel-left ${submitting ? 'panel-left--locked' : ''}`}>
+      <SidebarTree pane="send">
+        <div className={submitting ? 'rail-tree-lock panel-left--locked' : 'rail-tree-lock'}>
           <DestinationTree
             key={formKey}
             selected={destinations}
-            onChange={setDestinations}
+            onChange={(next) => {
+              if (next.length > destinationLimit) {
+                setError(tooManyDestinationsMessage(destinationLimit));
+                return;
+              }
+              setDestinations(next);
+            }}
+            maxDestinations={destinationLimit}
             revealFolderPath={revealFolderPath}
             revealFolderId={
               (location.state as SendLocationState | null)?.destination?.folderId ?? undefined
             }
           />
         </div>
-        <div className="panel-right">
-          <div className="panel-right-header">To send</div>
+      </SidebarTree>
+
+      <div className="files-pane send-pane">
+        <div className="files-pane-header">
+          <div className="files-pane-heading">
+            <h2 className="files-pane-title">Distribute documents</h2>
+            <p className="files-pane-lead">
+              Choose folders on the left, then drop the documents to send.
+              <br />
+              Authorized users will be able to download them from Documents.
+            </p>
+          </div>
+        </div>
+        <div className="send-pane-body">
           <FilePicker
             files={files}
             onFilesAdded={handleFilesAdded}
             onFileRemoved={handleFileRemoved}
             onErrorChange={setFileError}
             disabled={submitting}
-            pageDrop={location.pathname === '/send'}
+            pageDrop={onSend}
           />
         </div>
-      </div>
 
-      {destinations.length > 0 && (
-        <div className="selection-summary">
-          <div className="summary-destinations">
-            {destinations.map((d, i) => (
-              <span key={i} className="dest-chip">
-                {`${d.teamName} / ${d.binderName}`}
-                {d.folderName && ` / ${d.folderName}`}
-                {!submitting && (
-                  <button
-                    className="chip-remove"
-                    onClick={() =>
-                      setDestinations(destinations.filter((_, j) => j !== i))
-                    }
-                  >
-                    &times;
-                  </button>
-                )}
-              </span>
-            ))}
+        {destinations.length > 0 && (
+          <div className="selection-summary">
+            <div className="summary-destinations">
+              {destinations.map((d, i) => (
+                <span key={i} className="dest-chip">
+                  {`${d.teamName} / ${d.binderName}`}
+                  {d.folderName && ` / ${d.folderName}`}
+                  {!submitting && (
+                    <button
+                      className="chip-remove"
+                      onClick={() =>
+                        setDestinations(destinations.filter((_, j) => j !== i))
+                      }
+                    >
+                      &times;
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {error && (
-        <div className="error-banner error-banner--dismissible" role="alert">
-          <span>{error}</span>
-          <button
-            type="button"
-            className="error-banner-dismiss"
-            onClick={() => setError(null)}
-            aria-label="Dismiss error"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+        {error && (
+          <div className="error-banner error-banner--dismissible" role="alert">
+            <span>{error}</span>
+            <button
+              type="button"
+              className="error-banner-dismiss"
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
-      <div className="job-actions">
-        <span className="send-button-wrap" title={disabledReason}>
-          <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? 'Sending...' : 'Send'}
-          </button>
-          {disabledReason && <span className="send-tooltip" role="tooltip">{disabledReason}</span>}
-        </span>
+        <div className="job-actions">
+          <span className="send-button-wrap" title={disabledReason}>
+            <button className="btn btn-primary btn-lg" disabled={!canSubmit} onClick={handleSubmit}>
+              {submitting ? 'Sending...' : 'Send'}
+            </button>
+            {disabledReason && <span className="send-tooltip" role="tooltip">{disabledReason}</span>}
+          </span>
+        </div>
       </div>
     </div>
   );

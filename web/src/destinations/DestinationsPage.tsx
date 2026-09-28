@@ -21,15 +21,8 @@ export function DestinationsPage() {
   }, [navigate]);
 
   return (
-    <div className="destinations-page">
-      <p className="page-lead">
-        Authorized users can download documents from this destination hierarchy.
-        <br />
-        Expand a team, binder, or folder here. The rest of the tree stays visible so you can move between them.
-      </p>
-      <div className="destinations-content">
-        <DocumentsTree reveal={reveal} onSendHere={sendFilesHere} />
-      </div>
+    <div className="files-stage">
+      <DocumentsTree reveal={reveal} onSendHere={sendFilesHere} />
     </div>
   );
 }

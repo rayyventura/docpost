@@ -71,3 +71,9 @@ variable "spa_cors_origins" {
   type        = list(string)
   default     = ["*"]
 }
+
+variable "total_supported_destinations" {
+  description = "Max folder destinations per send (TOTAL_SUPPORTED_DESTINATIONS). Raise only after load-testing fanout, SQS, and delivery."
+  type        = number
+  default     = 20
+}

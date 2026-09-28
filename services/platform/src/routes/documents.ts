@@ -5,10 +5,11 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import multer from 'multer';
-import { AppError, ForbiddenError, NotFoundError, ValidationError } from '@docpost/shared';
+import { AppError, FOLDER_DESTINATION_REQUIRED, ForbiddenError, NotFoundError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
-import { binders, teamMembers, folders, documents } from '../db/schema.js';
+import { binders, teamMembers, documents } from '../db/schema.js';
 import { getDocumentObjectStream, putDocumentObject, usesObjectStorage } from '../lib/s3.js';
+import { assertFolderDestinations } from '../lib/folderDestinations.js';
 import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
 
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -26,7 +27,7 @@ const router = Router();
 interface IngestMetadata {
   taskId: string;
   binderId: string;
-  folderId?: string;
+  folderId: string;
   name: string;
   contentType: string;
   checksumSha256: string;
@@ -56,8 +57,8 @@ function parseMetadata(raw: string): IngestMetadata {
     );
   }
 
-  if (folderId !== undefined && typeof folderId !== 'string') {
-    throw new ValidationError('folderId must be a string if provided');
+  if (typeof folderId !== 'string' || folderId.length === 0) {
+    throw new ValidationError(FOLDER_DESTINATION_REQUIRED);
   }
 
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
@@ -69,7 +70,7 @@ function parseMetadata(raw: string): IngestMetadata {
   return {
     taskId,
     binderId,
-    folderId: folderId as string | undefined,
+    folderId,
     name,
     contentType,
     checksumSha256,
@@ -199,18 +200,9 @@ router.post(
         throw new ForbiddenError();
       }
 
-      // If folderId specified, verify the folder belongs to this binder
-      if (metadata.folderId) {
-        const folderResult = await db
-          .select({ binderId: folders.binderId })
-          .from(folders)
-          .where(eq(folders.id, metadata.folderId))
-          .limit(1);
-
-        if (folderResult.length === 0 || folderResult[0].binderId !== metadata.binderId) {
-          throw new ValidationError('Folder does not belong to the specified binder');
-        }
-      }
+      await assertFolderDestinations([
+        { teamId, binderId: metadata.binderId, folderId: metadata.folderId },
+      ]);
 
       // Compute SHA-256 checksum of received file bytes
       const computedChecksum = crypto
@@ -230,7 +222,7 @@ router.post(
         .insert(documents)
         .values({
           binderId: metadata.binderId,
-          folderId: metadata.folderId ?? null,
+          folderId: metadata.folderId,
           name: metadata.name,
           sizeBytes: BigInt(fileBuffer.length),
           contentType: metadata.contentType,

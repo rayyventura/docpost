@@ -19,6 +19,9 @@ ecs_cpu           = 256
 ecs_memory        = 512
 ecs_desired_count = 2
 
+# Max folders per send. Raise only after load-testing fanout, SQS, and delivery.
+total_supported_destinations = 20
+
 # SPA CORS — restrict in prod to the CloudFront domain
 # Update this after first deploy with the actual CloudFront domain
 spa_cors_origins = ["*"]

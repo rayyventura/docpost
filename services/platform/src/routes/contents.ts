@@ -1,9 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { eq, and, isNull, inArray } from 'drizzle-orm';
-import { ForbiddenError } from '@docpost/shared';
+import { FOLDER_DESTINATION_REQUIRED, ForbiddenError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { teamMembers, teams, binders, folders, documents } from '../db/schema.js';
 import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
+import { assertFolderDestinations } from '../lib/folderDestinations.js';
 
 const router = Router();
 
@@ -231,6 +232,28 @@ router.post(
       });
 
       res.json({ destinations });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/internal/assert-folder-destinations',
+  requireServiceAuth('memberships:read'),
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const items = req.body?.destinations;
+      if (!Array.isArray(items) || items.length === 0) {
+        throw new ValidationError('destinations is required');
+      }
+      for (const item of items) {
+        if (!item?.folderId) {
+          throw new ValidationError(FOLDER_DESTINATION_REQUIRED);
+        }
+      }
+      await assertFolderDestinations(items);
+      res.status(204).end();
     } catch (err) {
       next(err);
     }

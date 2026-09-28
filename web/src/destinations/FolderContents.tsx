@@ -121,7 +121,7 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   if (isEmpty) {
     return (
       <ContentReveal>
-        <p className="empty-state">Nothing has been sent here yet.</p>
+        <p className="empty-state">No documents have been sent here yet.</p>
       </ContentReveal>
     );
   }

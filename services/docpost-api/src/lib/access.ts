@@ -1,3 +1,5 @@
+import { FOLDER_DESTINATION_REQUIRED, ValidationError } from '@docpost/shared';
+
 const PLATFORM_URL = process.env.PLATFORM_URL ?? 'http://localhost:3002';
 const AUTH_TOKEN_URL = process.env.AUTH_TOKEN_URL ?? 'http://localhost:3001/auth/token';
 const SERVICE_CLIENT_ID = process.env.SERVICE_CLIENT_ID ?? 'delivery-worker';
@@ -110,6 +112,40 @@ export async function destinationPaths(
   }
 
   return paths;
+}
+
+export async function assertFolderDestinations(
+  items: Array<{ teamId: string; binderId: string; folderId: string }>,
+): Promise<void> {
+  const unique: Array<{ teamId: string; binderId: string; folderId: string }> = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const key = `${item.teamId}:${item.binderId}:${item.folderId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  if (unique.length === 0) {
+    throw new ValidationError('Choose at least one destination');
+  }
+
+  const serviceToken = await getServiceToken();
+  const res = await fetch(`${PLATFORM_URL}/internal/assert-folder-destinations`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${serviceToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ destinations: unique }),
+  });
+
+  if (res.status === 422) {
+    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new ValidationError(body?.error?.message ?? FOLDER_DESTINATION_REQUIRED);
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to validate destinations: ${res.status}`);
+  }
 }
 
 export async function teamName(teamId: string): Promise<string> {
