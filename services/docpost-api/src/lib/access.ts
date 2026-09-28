@@ -86,7 +86,11 @@ export async function destinationPaths(
       },
       body: JSON.stringify({ destinations: items }),
     });
-    if (!res.ok) return paths;
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`destination-paths failed: ${res.status} ${body}`);
+      return paths;
+    }
 
     const body = (await res.json()) as {
       destinations: Array<{
@@ -107,7 +111,8 @@ export async function destinationPaths(
         folderPath: destination.folderPath ?? [],
       });
     }
-  } catch {
+  } catch (err) {
+    console.error('destination-paths failed', err);
     return paths;
   }
 

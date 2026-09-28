@@ -119,6 +119,14 @@ function statusClass(status: string): string {
   return `status-badge status-${status.replaceAll('_', '-')}`;
 }
 
+function destinationText(task: TaskDetail): string {
+  if (task.destination?.trim()) return task.destination;
+  const folders = (task.folderPath ?? []).map((segment) =>
+    typeof segment === 'string' ? segment : segment.name,
+  );
+  return [task.teamName, task.binderName, ...folders].filter(Boolean).join(' / ');
+}
+
 function documentsLocation(task: TaskDetail): FilesLocationState | null {
   if (
     task.status === 'failed' ||
@@ -555,6 +563,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             {visibleTasks.map((t) => {
               const upload = uploadForTask(t, uploads);
               const filesLocation = documentsLocation(t);
+              const destination = destinationText(t);
               return (
               <tr
                 key={t.taskId}
@@ -564,17 +573,17 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
               >
                 <td className="task-file">{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">
-                  {t.destination ? (
+                  {destination ? (
                     filesLocation ? (
                       <Link
                         to="/"
                         state={filesLocation}
                         className="task-destination-link"
                       >
-                        {t.destination}
+                        {destination}
                       </Link>
                     ) : (
-                      t.destination
+                      destination
                     )
                   ) : (
                     '-'

@@ -78,6 +78,12 @@ const STATUS_RANK: Record<string, number> = {
   failed: 2,
 };
 
+function firstNonEmpty(primary: string | null | undefined, fallback: string | null | undefined): string | null {
+  if (primary && primary.trim()) return primary;
+  if (fallback && fallback.trim()) return fallback;
+  return primary ?? fallback ?? null;
+}
+
 export function mergeFetchedTasks(current: TaskDetail[], fetched: TaskDetail[]): TaskDetail[] {
   if (current.length === 0) return fetched;
 
@@ -86,12 +92,25 @@ export function mergeFetchedTasks(current: TaskDetail[], fetched: TaskDetail[]):
       current.find((row) => row.taskId === task.taskId) ??
       current.find((row) => isPlaceholderId(row.taskId) && sameFile(row, task));
     if (!local) return task;
-    if ((STATUS_RANK[local.status] ?? 0) <= (STATUS_RANK[task.status] ?? 0)) return task;
+    const merged =
+      (STATUS_RANK[local.status] ?? 0) <= (STATUS_RANK[task.status] ?? 0)
+        ? task
+        : {
+            ...task,
+            status: local.status,
+            attemptCount: Math.max(local.attemptCount, task.attemptCount),
+            failureReason: local.failureReason ?? task.failureReason,
+          };
     return {
-      ...task,
-      status: local.status,
-      attemptCount: Math.max(local.attemptCount, task.attemptCount),
-      failureReason: local.failureReason ?? task.failureReason,
+      ...merged,
+      destination: firstNonEmpty(merged.destination, local.destination),
+      teamName: firstNonEmpty(merged.teamName, local.teamName),
+      binderName: firstNonEmpty(merged.binderName, local.binderName),
+      folderPath:
+        merged.folderPath && merged.folderPath.length > 0 ? merged.folderPath : local.folderPath,
+      teamId: merged.teamId || local.teamId,
+      binderId: merged.binderId || local.binderId,
+      folderId: merged.folderId || local.folderId,
     };
   });
 }
