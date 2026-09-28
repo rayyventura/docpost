@@ -438,20 +438,25 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
     if (revealing || !focusFolderId) return;
     let tries = 0;
     let frame = 0;
+    let highlightTimer = 0;
     const find = () => {
       const row = document.querySelector<HTMLElement>(`[data-folder-id="${focusFolderId}"]`);
       if (row) {
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        highlightTimer = window.setTimeout(() => setFocusFolderId(null), 1600);
         return;
       }
-      if (tries < 12) {
+      if (tries < 24) {
         tries += 1;
         frame = requestAnimationFrame(find);
       }
     };
     find();
-    return () => cancelAnimationFrame(frame);
-  }, [revealing, focusFolderId, foldersByParent, expandedFolders, expandedBinders]);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [revealing, focusFolderId]);
 
   const isSelected = useCallback(
     (d: { teamId: string; binderId?: string | null; folderId?: string | null }): boolean =>
@@ -549,7 +554,8 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
           <span className="tree-badge">{selected.length}</span>
         )}
       </div>
-      <ContentReveal className="tree-scroll">
+      <div className="tree-scroll">
+      <ContentReveal>
         {teams.map((team) => {
           const isExpanded = expandedTeams.has(team.id);
           const isLoading = loadingSet.has(`team:${team.id}`);
@@ -617,6 +623,7 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
           );
         })}
       </ContentReveal>
+      </div>
     </div>
   );
 }

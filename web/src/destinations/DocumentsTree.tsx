@@ -166,6 +166,8 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
 
   const bindersByTeamRef = useRef(bindersByTeam);
   const contentsByParentRef = useRef(contentsByParent);
+  const revealedToken = useRef<string | null>(null);
+  const focusTimer = useRef(0);
   bindersByTeamRef.current = bindersByTeam;
   contentsByParentRef.current = contentsByParent;
 
@@ -318,6 +320,17 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
       return;
     }
 
+    const token = [
+      reveal.teamId,
+      reveal.binderId,
+      reveal.folderId ?? '',
+      reveal.documentId ?? reveal.fileName ?? '',
+    ].join(':');
+    if (revealedToken.current === token) {
+      setRevealing(false);
+      return;
+    }
+
     setRevealing(true);
     setFocusDocumentId(null);
 
@@ -438,7 +451,10 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
       } catch (err) {
         console.error(err);
       } finally {
-        if (!cancelled) setRevealing(false);
+        if (!cancelled) {
+          revealedToken.current = token;
+          setRevealing(false);
+        }
       }
     };
 
@@ -449,23 +465,28 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   }, [loadingTeams, reveal, teams, loadBinders, loadContents]);
 
   useEffect(() => {
-    if (!focusDocumentId) return;
+    if (revealing || !focusDocumentId) return;
     let tries = 0;
     let frame = 0;
     const find = () => {
       const row = document.querySelector<HTMLElement>(`[data-document-id="${focusDocumentId}"]`);
       if (row) {
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        window.clearTimeout(focusTimer.current);
+        focusTimer.current = window.setTimeout(() => setFocusDocumentId(null), 1600);
         return;
       }
-      if (tries < 12) {
+      if (tries < 24) {
         tries += 1;
         frame = requestAnimationFrame(find);
       }
     };
     find();
-    return () => cancelAnimationFrame(frame);
-  }, [focusDocumentId, contentsByParent, expandedFolders, expandedBinders]);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(focusTimer.current);
+    };
+  }, [focusDocumentId, revealing]);
 
   async function downloadDocument(documentId: string, name: string) {
     setDownloadingId(documentId);
@@ -595,7 +616,8 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   return (
     <div className="dest-tree documents-tree">
       {downloadError && <div className="error-banner">{downloadError}</div>}
-      <ContentReveal className="tree-scroll">
+      <div className="tree-scroll">
+      <ContentReveal>
         {teams.map((team) => {
           const isExpanded = expandedTeams.has(team.id);
           const isLoading = loadingSet.has(`team:${team.id}`);
@@ -662,6 +684,7 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
           );
         })}
       </ContentReveal>
+      </div>
     </div>
   );
 }
