@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
-import { Pagination } from '../Pagination';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Pagination } from '../Pagination';
 import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
@@ -187,6 +187,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   const [tasks, setTasks] = useState<TaskDetail[]>(seed.tasks);
   const [taskTotal, setTaskTotal] = useState(seed.tasks.length);
   const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(!seed.job && !!selectedJobId);
   const [listLoading, setListLoading] = useState(!selectedJobId);
@@ -229,7 +230,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
       const [job, taskData] = await Promise.all([
         apiRequest<JobSummary>(`/jobs/${selectedJobId}`),
         apiRequest<{ tasks: TaskDetail[]; total: number }>(
-          `/jobs/${selectedJobId}/tasks?page=${taskPage}&limit=100${filterParam}`,
+          `/jobs/${selectedJobId}/tasks?page=${taskPage}&limit=${taskPageSize}${filterParam}`,
         ),
       ]);
       if (requestId !== loadRequestId.current) return null;
@@ -257,7 +258,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     } finally {
       if (showLoading && requestId === loadRequestId.current) setLoading(false);
     }
-  }, [selectedJobId, taskPage, statusFilter]);
+  }, [selectedJobId, taskPage, taskPageSize, statusFilter]);
 
   const loadDetailsRef = useRef(loadDetails);
   loadDetailsRef.current = loadDetails;
@@ -606,8 +607,13 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
 
       <Pagination
         page={taskPage}
-        pageCount={Math.ceil(taskTotal / 100)}
+        pageCount={Math.ceil(taskTotal / taskPageSize)}
         onPageChange={setTaskPage}
+        pageSize={taskPageSize}
+        onPageSizeChange={(size) => {
+          setTaskPageSize(Math.min(MAX_PAGE_SIZE, size));
+          setTaskPage(1);
+        }}
       />
     </div>
   );

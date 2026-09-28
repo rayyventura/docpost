@@ -2032,9 +2032,11 @@ body {
 .pagination-page:hover {
   border-color: var(--color-accent);
   background: var(--color-accent-subtle);
+  color: var(--color-text);
 }
 
-.pagination-page--current {
+.pagination-page--current,
+.pagination-page--current:hover {
   border-color: var(--color-text);
   background: var(--color-text);
   color: var(--color-surface);
@@ -2069,6 +2071,40 @@ body {
 }
 
 .pagination-jump input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(156, 124, 108, 0.12);
+}
+
+.pagination-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.pagination-size select {
+  height: 2rem;
+  padding: 0 1.75rem 0 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2378716c' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E") no-repeat right 0.4rem center;
+  appearance: none;
+  -webkit-appearance: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.pagination-size select:hover {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text);
+}
+
+.pagination-size select:focus {
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px rgba(156, 124, 108, 0.12);
