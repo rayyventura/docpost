@@ -9,7 +9,7 @@ import { NotFoundError, ForbiddenError, ValidationError } from '@docpost/shared'
 
 const router = Router();
 
-// POST /files/:fileId/multipart — lazy multipart initiation or re-signing
+// POST /files/:fileId/multipart: lazy multipart initiation or re-signing
 router.post('/files/:fileId/multipart', requireUserAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!.sub;

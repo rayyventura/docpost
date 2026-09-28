@@ -120,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const timer = setTimeout(logout, msUntilExpiry);
       return () => clearTimeout(timer);
     } catch {
-      // invalid token — let the next API call handle it
+      // invalid token. Let the next API call handle it
     }
   }, [user, logout]);
 

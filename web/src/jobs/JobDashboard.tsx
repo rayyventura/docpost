@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
+import { Pagination } from '../Pagination';
 import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail } from './types';
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
@@ -129,6 +130,8 @@ function documentsLocation(task: TaskDetail): FilesLocationState | null {
     binderId: task.binderId,
     binderName: task.binderName,
     folderPath: task.folderPath ?? [],
+    documentId: task.platformDocumentId ?? undefined,
+    fileName: task.fileName ?? undefined,
   };
 }
 
@@ -395,7 +398,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         <p className="page-lead">
           An audit of each send: who filed what, where it was placed, and whether it completed.
           <br />
-          The documents themselves are in Documents.
+          The documents themselves are in the{' '}
+          <Link to="/" className="page-lead-link">
+            Documents tab
+          </Link>
+          .
         </p>
         {listLoading ? (
           <PageLoading label="Loading deliveries" />
@@ -436,13 +443,6 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           &larr; Delivery audit
         </button>
         <h2>Delivery Details</h2>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => void navigate('/')}
-        >
-          View in Documents
-        </button>
       </div>
       <p className="page-lead">
         Audit record for this send.
@@ -539,7 +539,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
                       {t.destination}
                     </Link>
                   ) : (
-                    '—'
+                    '-'
                   )}
                 </td>
                 <td className="task-status">
@@ -566,27 +566,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         </ContentReveal>
       )}
 
-      {taskTotal > 100 && (
-        <div className="pagination">
-          <button
-            className="btn btn-sm"
-            disabled={taskPage <= 1}
-            onClick={() => setTaskPage((p) => p - 1)}
-          >
-            Previous
-          </button>
-          <span>
-            Page {taskPage} of {Math.ceil(taskTotal / 100)}
-          </span>
-          <button
-            className="btn btn-sm"
-            disabled={taskPage >= Math.ceil(taskTotal / 100)}
-            onClick={() => setTaskPage((p) => p + 1)}
-          >
-            Next
-          </button>
-        </div>
-      )}
+      <Pagination
+        page={taskPage}
+        pageCount={Math.ceil(taskTotal / 100)}
+        onPageChange={setTaskPage}
+      />
     </div>
   );
 }

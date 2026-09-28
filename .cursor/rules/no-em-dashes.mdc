@@ -1,0 +1,18 @@
+---
+description: Never use em dashes in copy, UI, comments, or docs
+alwaysApply: true
+---
+
+# No em dashes
+
+Never use an em dash (—, U+2014) or `&mdash;` in anything we write for this project or any other app we build together.
+
+Use a period, comma, colon, or hyphen instead.
+
+```
+Bad:  Expand a folder here — the rest of the tree stays visible.
+Good: Expand a folder here. The rest of the tree stays visible.
+
+Bad:  empty cell as '—'
+Good: empty cell as '-'
+```

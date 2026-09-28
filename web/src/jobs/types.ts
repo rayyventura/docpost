@@ -52,6 +52,8 @@ export interface FilesLocationState {
   binderId: string;
   binderName: string;
   folderPath?: FolderPathSegment[];
+  documentId?: string;
+  fileName?: string;
 }
 
 export interface DeliveryTaskSeed {

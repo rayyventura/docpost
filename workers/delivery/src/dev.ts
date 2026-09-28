@@ -40,7 +40,7 @@ async function poll(): Promise<void> {
             receiptHandle: msg.ReceiptHandle!,
           } as SQSRecord);
 
-          // Success — ack the message
+          // Success: ack the message
           await sqs.send(
             new DeleteMessageCommand({
               QueueUrl: QUEUE_URL,
@@ -49,7 +49,7 @@ async function poll(): Promise<void> {
           );
         } catch (err) {
           console.error('Error processing task, will retry:', err);
-          // Don't delete — visibility timeout handles retry
+          // Don't delete. Visibility timeout handles retry.
         }
       }
     } catch (err) {

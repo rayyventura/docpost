@@ -54,7 +54,7 @@ function formatDocument(doc: {
   };
 }
 
-// GET /binders/:binderId/contents — root level of a binder
+// GET /binders/:binderId/contents: root level of a binder
 router.get(
   '/binders/:binderId/contents',
   requireUserAuth,
@@ -106,7 +106,7 @@ router.get(
   },
 );
 
-// GET /folders/:folderId/contents — contents inside a folder
+// GET /folders/:folderId/contents: contents inside a folder
 router.get(
   '/folders/:folderId/contents',
   requireUserAuth,

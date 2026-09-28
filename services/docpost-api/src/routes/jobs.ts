@@ -149,7 +149,7 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
       return { jobId, fileRows };
     });
 
-    // Generate presigned upload plans (outside transaction — no DB needed)
+    // Generate presigned upload plans (outside transaction; no DB needed)
     const uploadPlans: UploadPlan[] = await Promise.all(
       result.fileRows.map((fileRow, i) => {
         const input = fileInputs[i];
@@ -163,7 +163,7 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
       }),
     );
 
-    // Publish watchdog message — failure here fails the endpoint
+    // Publish watchdog message. Failure here fails the endpoint.
     await publishJobMessage(result.jobId, 60);
 
     res.status(201).json({

@@ -340,6 +340,31 @@ body {
   margin-bottom: 1rem;
 }
 
+.error-banner--dismissible {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.error-banner-dismiss {
+  flex-shrink: 0;
+  margin: -0.25rem -0.25rem -0.25rem 0;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.error-banner-dismiss:hover {
+  background: rgb(255 255 255 / 0.45);
+}
+
 .success-banner {
   background: var(--color-success-bg);
   border: 1px solid var(--color-success);
@@ -714,6 +739,17 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.page-lead-link {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.page-lead-link:hover {
+  color: var(--color-text);
 }
 
 /* ===== Tab Panels ===== */
@@ -1131,7 +1167,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.5rem 1rem;
+  padding: 0.7rem 1.15rem;
   font-size: 0.8125rem;
   cursor: default;
   transition: background var(--transition);
@@ -1281,12 +1317,47 @@ body {
   font-weight: 500;
 }
 
+.tree-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tree-send-here {
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.tree-row--active {
+  background: var(--color-accent-subtle);
+}
+
+.tree-row-doc--focus {
+  background: #e8f3f8;
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
 .tree-loading,
 .tree-empty {
   padding: 2.5rem 1rem;
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: 0.8125rem;
+}
+
+.tree-empty-inline {
+  padding: 0.25rem 1rem 0.5rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
 }
 
 /* ===== Selection Summary (chips) ===== */
@@ -1779,9 +1850,74 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
   padding: 1rem 0;
   font-size: 0.8125rem;
+}
+
+.pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pagination-page {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.pagination-page:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.pagination-page--current {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
+  cursor: default;
+}
+
+.pagination-gap {
+  min-width: 1.25rem;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.pagination-jump input {
+  width: 3.5rem;
+  height: 2rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.pagination-jump input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(156, 124, 108, 0.12);
 }
 
 /* ===== Loading ===== */

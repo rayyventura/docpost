@@ -70,14 +70,20 @@ interface FilePickerProps {
   files: SelectedFile[];
   onFilesAdded: (files: SelectedFile[]) => void;
   onFileRemoved: (id: string) => void;
+  onErrorChange?: (error: string | null) => void;
   disabled?: boolean;
   pageDrop?: boolean;
 }
 
-export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageDrop }: FilePickerProps) {
+export function FilePicker({ files, onFilesAdded, onFileRemoved, onErrorChange, disabled, pageDrop }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
+
+  const showError = useCallback((message: string | null) => {
+    setPickError(message);
+    onErrorChange?.(message);
+  }, [onErrorChange]);
 
   const handleFiles = useCallback(
     async (incoming: File[]) => {
@@ -87,11 +93,11 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
       const skippedType = incoming.filter((f) => f.size <= MAX_SIZE && !fileContentType(f)).length;
 
       if (tooLarge.length === 1) {
-        setPickError(`${tooLarge[0].name} is larger than 1 GB and cannot be sent.`);
+        showError(`${tooLarge[0].name} is larger than 1 GB and cannot be sent.`);
       } else if (tooLarge.length > 1) {
-        setPickError(`${tooLarge.length} files are larger than 1 GB and cannot be sent.`);
+        showError(`${tooLarge.length} files are larger than 1 GB and cannot be sent.`);
       } else {
-        setPickError(null);
+        showError(null);
       }
 
       const newFiles: SelectedFile[] = selected
@@ -106,7 +112,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
 
       if (newFiles.length === 0) {
         if (tooLarge.length === 0 && skippedType > 0) {
-          setPickError('Use PDF, DOCX, XLSX, PNG, or JPG.');
+          showError('Use PDF, DOCX, XLSX, PNG, or JPG.');
         }
         return;
       }
@@ -127,7 +133,7 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
       // Trigger re-render with updated hashes
       onFilesAdded([]);
     },
-    [files.length, onFilesAdded],
+    [files.length, onFilesAdded, showError],
   );
 
   const handleChange = useCallback(
@@ -232,8 +238,16 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, disabled, pageD
         </p>
       </div>
       {pickError && (
-        <div className="error-banner" role="alert">
-          {pickError}
+        <div className="error-banner error-banner--dismissible" role="alert">
+          <span>{pickError}</span>
+          <button
+            type="button"
+            className="error-banner-dismiss"
+            onClick={() => showError(null)}
+            aria-label="Dismiss error"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

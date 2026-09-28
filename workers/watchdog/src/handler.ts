@@ -100,7 +100,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
         console.log(`Watchdog enqueued ${pendingTasks.length} tasks for file ${file.id}`);
       }
     } else if (now > file.stagingDeadlineAt) {
-      // Past deadline — fail all tasks for this file
+      // Past deadline: fail all tasks for this file
       await db
         .update(files)
         .set({ status: 'expired' })
