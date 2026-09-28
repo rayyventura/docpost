@@ -1,9 +1,12 @@
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
-import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
+import { S3Client } from '@aws-sdk/client-s3';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { eq, and, sql, gte, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks, jobs } from './schema.js';
+import { enqueueTasks } from './enqueue.js';
+import { pushTaskUpdates, type TaskUpdate } from './notify.js';
+import { verifyStagedObject } from './verify.js';
 
 let _s3: S3Client | undefined;
 let _sqs: SQSClient | undefined;
@@ -50,76 +53,96 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     return;
   }
 
+  const now = new Date();
+  const statusChanges: TaskUpdate[] = [];
+
+  if (isRedelivery(record)) {
+    // A previous run of this message threw, possibly after promoting a file but before its
+    // tasks were enqueued. Re-send tasks still pending on uploaded files; the delivery
+    // worker's conditional claim absorbs any duplicate.
+    await requeuePendingTasksOfUploadedFiles(db, jobId);
+  }
+
   // Find all pending files for this job
   const pendingFiles = await db
     .select()
     .from(files)
     .where(and(eq(files.jobId, jobId), eq(files.status, 'pending')));
 
-  const now = new Date();
-
   for (const file of pendingFiles) {
-    // HEAD S3 to check if file exists
-    let exists: boolean;
-    try {
-      await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
-      exists = true;
-    } catch {
-      exists = false;
-    }
+    // Same check fan-out applies: the object must exist and match the declared size.
+    const verification = await verifyStagedObject(getS3(), env('S3_BUCKET', 'docpost-staging-local'), file);
 
-    if (exists) {
-      // Promote file and enqueue its tasks
+    if (verification.status === 'verified') {
+      // Promote file and enqueue its tasks (the S3 event was lost or delayed)
       const [promoted] = await db
         .update(files)
-        .set({ status: 'uploaded', uploadedAt: now })
+        .set({ status: 'uploaded', uploadedAt: now, verificationError: null })
         .where(and(eq(files.id, file.id), eq(files.status, 'pending')))
         .returning({ id: files.id });
 
       if (promoted) {
         console.log(`Watchdog promoted file ${file.id} to uploaded`);
-
-        const pendingTasks = await db
-          .select({ id: tasks.id })
-          .from(tasks)
-          .where(and(eq(tasks.fileId, file.id), eq(tasks.status, 'pending')));
-
-        for (let i = 0; i < pendingTasks.length; i += 10) {
-          const batch = pendingTasks.slice(i, i + 10);
-          await getSqs().send(
-            new SendMessageBatchCommand({
-              QueueUrl: env('TASK_QUEUE_URL', 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks'),
-              Entries: batch.map((t, idx) => ({
-                Id: String(idx),
-                MessageBody: JSON.stringify({ taskId: t.id }),
-              })),
-            }),
-          );
-        }
-
-        console.log(`Watchdog enqueued ${pendingTasks.length} tasks for file ${file.id}`);
+        const count = await enqueuePendingTasks(db, [file.id]);
+        console.log(`Watchdog enqueued ${count} tasks for file ${file.id}`);
       }
-    } else if (now > file.stagingDeadlineAt) {
+      continue;
+    }
+
+    let rejection = file.verificationError;
+    if (verification.status === 'rejected') {
+      // Stored bytes don't match the declaration: never promote. Record it like fan-out does.
+      rejection = verification.reason;
+      if (file.verificationError !== verification.reason) {
+        await db
+          .update(files)
+          .set({ verificationError: verification.reason })
+          .where(and(eq(files.id, file.id), eq(files.status, 'pending')));
+      }
+      console.log(`Watchdog: file ${file.id} failed verification: ${verification.reason}`);
+    }
+
+    if (now > file.stagingDeadlineAt) {
       // Past deadline: fail all tasks for this file
       await db
         .update(files)
         .set({ status: 'expired' })
         .where(eq(files.id, file.id));
 
-      await db
+      // A rejected upload fails with the verification error (blueprint: files.verification_error
+      // is copied into each task's failure_reason); otherwise the file simply never arrived.
+      const failureReason =
+        rejection ?? `FILE_NOT_UPLOADED ${JSON.stringify({ fileName: file.originalName, reason: 'deadline' })}`;
+
+      const failed = await db
         .update(tasks)
         .set({
           status: 'failed',
-          failureReason: `FILE_NOT_UPLOADED ${JSON.stringify({ fileName: file.originalName, reason: 'deadline' })}`,
+          failureReason,
           updatedAt: now,
         })
-        .where(and(eq(tasks.fileId, file.id), eq(tasks.status, 'pending')));
+        .where(and(eq(tasks.fileId, file.id), eq(tasks.status, 'pending')))
+        .returning({ id: tasks.id, attemptCount: tasks.attemptCount });
+
+      for (const task of failed) {
+        statusChanges.push({
+          taskId: task.id,
+          fileId: file.id,
+          fileName: file.originalName,
+          attemptCount: task.attemptCount,
+          status: 'failed',
+          failureReason,
+        });
+      }
 
       console.log(`Watchdog expired file ${file.id} and failed its tasks`);
     }
   }
 
-  await failExhaustedTasks(db, jobId, now);
+  statusChanges.push(...(await failExhaustedTasks(db, jobId, now)));
+
+  // Live dashboard updates for every task this run failed. Never throws.
+  await pushTaskUpdates(jobId, statusChanges);
 
   // Check if job is now complete
   await db.execute(sql`
@@ -166,18 +189,48 @@ export async function processRecord(record: SQSRecord): Promise<void> {
   }
 }
 
+/** True when SQS hands this message out again because an earlier run did not ack it. */
+function isRedelivery(record: SQSRecord): boolean {
+  return Number(record.attributes?.ApproximateReceiveCount ?? 1) > 1;
+}
+
+type Db = Awaited<ReturnType<typeof getDb>>;
+
+async function enqueuePendingTasks(db: Db, fileIds: string[]): Promise<number> {
+  if (fileIds.length === 0) return 0;
+  const pendingTasks = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(inArray(tasks.fileId, fileIds), eq(tasks.status, 'pending')));
+
+  await enqueueTasks(
+    getSqs(),
+    env('TASK_QUEUE_URL', 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks'),
+    pendingTasks.map((t) => t.id),
+  );
+  return pendingTasks.length;
+}
+
+async function requeuePendingTasksOfUploadedFiles(db: Db, jobId: string): Promise<void> {
+  const uploaded = await db
+    .select({ id: files.id })
+    .from(files)
+    .where(and(eq(files.jobId, jobId), eq(files.status, 'uploaded')));
+
+  const count = await enqueuePendingTasks(db, uploaded.map((f) => f.id));
+  if (count > 0) console.log(`Watchdog re-enqueued ${count} pending tasks of uploaded files for job ${jobId}`);
+}
+
 function maxAttempts(): number {
   return Number(env('MAX_RECEIVE_COUNT', '3'));
 }
 
-async function failExhaustedTasks(
-  db: Awaited<ReturnType<typeof getDb>>,
-  jobId: string,
-  now: Date,
-): Promise<void> {
+async function failExhaustedTasks(db: Db, jobId: string, now: Date): Promise<TaskUpdate[]> {
+  const changes: TaskUpdate[] = [];
   const stuck = await db
     .select({
       id: tasks.id,
+      fileId: tasks.fileId,
       attemptCount: tasks.attemptCount,
       fileName: files.originalName,
     })
@@ -210,8 +263,17 @@ async function failExhaustedTasks(
 
     if (failed) {
       console.log(`Watchdog failed task ${task.id} after ${task.attemptCount} attempts`);
+      changes.push({
+        taskId: task.id,
+        fileId: task.fileId,
+        fileName: task.fileName,
+        attemptCount: task.attemptCount,
+        status: 'failed',
+        failureReason: reason,
+      });
     }
   }
+  return changes;
 }
 
 export const handler: SQSHandler = async (event) => {

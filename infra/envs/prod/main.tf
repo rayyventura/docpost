@@ -498,6 +498,7 @@ module "lambda_watchdog" {
     JOB_QUEUE_URL       = module.sqs.queue_urls["jobs"]
     DATABASE_URL        = data.aws_secretsmanager_secret_version.docpost_service.secret_string
     DATABASE_SECRET_ARN = module.rds.secret_arns["docpost_service"]
+    WS_CALLBACK_URL     = module.websocket_api.callback_url
   }
 }
 
@@ -542,6 +543,22 @@ module "websocket_api" {
 resource "aws_iam_role_policy" "delivery_manage_connections" {
   name = "${var.project_name}-${var.environment}-delivery-ws"
   role = module.lambda_delivery.role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["execute-api:ManageConnections"]
+        Resource = "${module.websocket_api.execution_arn}/*"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "watchdog_manage_connections" {
+  name = "${var.project_name}-${var.environment}-watchdog-ws"
+  role = module.lambda_watchdog.role_name
 
   policy = jsonencode({
     Version = "2012-10-17"

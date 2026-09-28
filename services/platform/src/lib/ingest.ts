@@ -1,4 +1,5 @@
 import { FOLDER_DESTINATION_REQUIRED, ValidationError } from '@docpost/shared';
+import { isUuid } from './ids.js';
 
 export interface IngestRequest {
   taskId: string;
@@ -52,6 +53,18 @@ export function parseIngestBody(raw: unknown): IngestRequest {
 
   if (typeof folderId !== 'string' || folderId.length === 0) {
     throw new ValidationError(FOLDER_DESTINATION_REQUIRED);
+  }
+
+  // Rejected here (422, non-retryable) rather than reaching Postgres as a malformed uuid.
+  for (const [field, value] of [
+    ['taskId', taskId],
+    ['binderId', binderId],
+    ['folderId', folderId],
+    ['onBehalfOf', onBehalfOf],
+  ] as const) {
+    if (!isUuid(value)) {
+      throw new ValidationError(`${field} must be a UUID`);
+    }
   }
 
   if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0 || !Number.isInteger(sizeBytes)) {

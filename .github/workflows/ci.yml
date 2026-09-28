@@ -18,3 +18,100 @@ jobs:
       - run: npx turbo lint
       - run: npx turbo test
       - run: npx turbo typecheck
+
+  # *.integration.test.ts against real Postgres 16 and LocalStack 3.8, set up the
+  # same way docker-compose.yml does locally (scripts/init-db.sql and
+  # scripts/init-localstack.sh). The test harnesses default to localhost:5432 and
+  # localhost:4566, so no connection env vars are needed.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: docpost_admin
+          POSTGRES_PASSWORD: localdev
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U docpost_admin -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      localstack:
+        image: localstack/localstack:3.8
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: s3,sqs,kms
+          DEFAULT_REGION: us-east-1
+        options: >-
+          --health-cmd "curl -fs http://localhost:4566/_localstack/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # LocalStack accepts any credentials; these keep the aws CLI and SDKs off real AWS.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_PAGER: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+
+      # Service containers cannot mount files from the checkout, so run the same
+      # init script docker-compose mounts into /docker-entrypoint-initdb.d.
+      - name: Initialise Postgres (scripts/init-db.sql)
+        env:
+          PGPASSWORD: localdev
+        run: psql -h localhost -U docpost_admin -d postgres -v ON_ERROR_STOP=1 -f scripts/init-db.sql
+
+      # scripts/init-localstack.sh calls `awslocal`, which is not on the runner.
+      # An exported shell function maps it onto the preinstalled aws CLI.
+      - name: Initialise LocalStack (scripts/init-localstack.sh)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:4566/_localstack/health | grep -Eq '"sqs": ?"(available|running)"'; then break; fi
+            sleep 2
+          done
+          awslocal() { aws --endpoint-url=http://localhost:4566 "$@"; }
+          export -f awslocal
+          bash scripts/init-localstack.sh
+
+      - name: Build shared package
+        run: npm run build --workspace=packages/shared
+
+      - name: Sync database schemas
+        run: |
+          for ws in services/auth services/platform services/docpost-api; do
+            echo "::group::db:push $ws"
+            npm run db:push --workspace="$ws" -- --force
+            echo "::endgroup::"
+          done
+
+      # Sequential on purpose: the suites share the three databases. Every suite
+      # runs even if an earlier one fails; the step fails if any did.
+      - name: Run integration tests
+        run: |
+          failed=()
+          for ws in services/auth services/platform services/docpost-api \
+                    workers/delivery workers/fanout workers/watchdog workers/ws; do
+            echo "::group::test:integration $ws"
+            if ! npm run test:integration --workspace="$ws"; then
+              failed+=("$ws")
+              echo "::error::Integration tests failed in $ws"
+            fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "Failed: ${failed[*]}"
+            exit 1
+          fi

@@ -1,31 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { SelectedFile } from './types';
 import { computeSha256 } from './useFileHash';
-
-const MAX_FILES = 100;
-const ALLOWED_TYPES = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/png',
-  'image/jpeg',
-];
-const TYPE_BY_EXT: Record<string, string> = {
-  pdf: 'application/pdf',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-};
-const ALLOWED_EXTENSIONS = '.pdf,.docx,.xlsx,.png,.jpg,.jpeg';
-const MAX_SIZE = 1_073_741_824; // 1 GB
-
-export function fileContentType(file: File): string {
-  if (ALLOWED_TYPES.includes(file.type)) return file.type;
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-  return TYPE_BY_EXT[ext] ?? '';
-}
+import {
+  ACCEPT_ATTRIBUTE,
+  MAX_FILES,
+  createFileId,
+  fileContentType,
+  planFileSelection,
+} from './fileSelection';
 
 function captureFile(file: File): File {
   const type = fileContentType(file) || file.type;
@@ -69,14 +51,22 @@ function isFileDrag(event: { dataTransfer?: DataTransfer | null }): boolean {
 interface FilePickerProps {
   files: SelectedFile[];
   onFilesAdded: (files: SelectedFile[]) => void;
+  onFileUpdated: (id: string, patch: Partial<Omit<SelectedFile, 'id' | 'file'>>) => void;
   onFileRemoved: (id: string) => void;
   onErrorChange?: (error: string | null) => void;
   disabled?: boolean;
   pageDrop?: boolean;
 }
 
-export function FilePicker({ files, onFilesAdded, onFileRemoved, onErrorChange, disabled, pageDrop }: FilePickerProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+export function FilePicker({
+  files,
+  onFilesAdded,
+  onFileUpdated,
+  onFileRemoved,
+  onErrorChange,
+  disabled,
+  pageDrop,
+}: FilePickerProps) {
   const [dragOver, setDragOver] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
 
@@ -87,60 +77,42 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, onErrorChange, 
 
   const handleFiles = useCallback(
     async (incoming: File[]) => {
-      const remaining = MAX_FILES - files.length;
-      const selected = incoming.slice(0, remaining);
-      const tooLarge = incoming.filter((f) => f.size > MAX_SIZE);
-      const skippedType = incoming.filter((f) => f.size <= MAX_SIZE && !fileContentType(f)).length;
+      const { accepted, error } = planFileSelection(incoming, files.length);
+      showError(error);
+      if (accepted.length === 0) return;
 
-      if (tooLarge.length === 1) {
-        showError(`${tooLarge[0].name} is larger than 1 GB and cannot be sent.`);
-      } else if (tooLarge.length > 1) {
-        showError(`${tooLarge.length} files are larger than 1 GB and cannot be sent.`);
-      } else {
-        showError(null);
-      }
-
-      const newFiles: SelectedFile[] = selected
-        .filter((f) => fileContentType(f) && f.size > 0 && f.size <= MAX_SIZE)
-        .map((f) => ({
-          id: crypto.randomUUID(),
-          file: f,
-          sha256: '',
-          status: 'hashing' as const,
-          progress: 0,
-        }));
-
-      if (newFiles.length === 0) {
-        if (tooLarge.length === 0 && skippedType > 0) {
-          showError('Use PDF, DOCX, XLSX, PNG, or JPG.');
-        }
-        return;
-      }
-
+      const newFiles: SelectedFile[] = accepted.map((f) => ({
+        id: createFileId(),
+        file: f,
+        sha256: '',
+        status: 'hashing' as const,
+        progress: 0,
+      }));
       onFilesAdded(newFiles);
 
-      // Compute hashes in background
+      // Hash one file at a time, updating each as soon as it is done.
       for (const sf of newFiles) {
         try {
-          const hash = await computeSha256(sf.file);
-          sf.sha256 = hash;
-          sf.status = 'ready';
+          const sha256 = await computeSha256(sf.file);
+          onFileUpdated(sf.id, { sha256, status: 'ready' });
         } catch {
-          sf.status = 'error';
-          sf.error = 'Failed to process file';
+          onFileUpdated(sf.id, {
+            status: 'error',
+            error: 'This file could not be read. Try choosing it again.',
+          });
         }
       }
-      // Trigger re-render with updated hashes
-      onFilesAdded([]);
     },
-    [files.length, onFilesAdded, showError],
+    [files.length, onFilesAdded, onFileUpdated, showError],
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files) {
-        void handleFiles(Array.from(e.target.files).map(captureFile));
-        e.target.value = '';
+      const picked = e.target.files ? Array.from(e.target.files).map(captureFile) : [];
+      // Reset so picking the same file again still fires a change event.
+      e.target.value = '';
+      if (picked.length > 0) {
+        void handleFiles(picked);
       }
     },
     [handleFiles],
@@ -215,28 +187,40 @@ export function FilePicker({ files, onFilesAdded, onFileRemoved, onErrorChange, 
 
   return (
     <div className={`file-picker${dragOver ? ' file-picker--receiving' : ''}`}>
-      <div
-        className={`drop-zone${dragOver ? ' drop-zone--active' : ''}`}
+      {/*
+        A <label> wrapping a visually hidden (not display:none) input opens the
+        native picker on tap without any scripted .click(), which iOS Safari
+        and Android Chrome both honour; it is also keyboard focusable.
+      */}
+      <label
+        className={`drop-zone${dragOver ? ' drop-zone--active' : ''}${disabled ? ' drop-zone--disabled' : ''}`}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => !disabled && inputRef.current?.click()}
       >
         <input
-          ref={inputRef}
+          className="drop-zone-input"
           type="file"
           multiple
-          accept={ALLOWED_EXTENSIONS}
+          accept={ACCEPT_ATTRIBUTE}
           onChange={handleChange}
-          hidden
           disabled={disabled}
         />
-        <p>{dragOver ? 'Drop to add' : 'Drop files here or click to browse'}</p>
-        <p className="drop-zone-hint">
+        <span className="drop-zone-title">
+          {dragOver ? (
+            'Drop to add'
+          ) : (
+            <>
+              <span className="drop-zone-copy--pointer">Drop files here or click to browse</span>
+              <span className="drop-zone-copy--touch">Tap to choose files</span>
+            </>
+          )}
+        </span>
+        <span className="drop-zone-hint">
           PDF, DOCX, XLSX, PNG, JPG. Up to 1 GB each. {MAX_FILES - files.length} remaining
-        </p>
-      </div>
+        </span>
+      </label>
       {pickError && (
         <div className="error-banner error-banner--dismissible" role="alert">
           <span>{pickError}</span>

@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { UnauthorizedError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
-import { passwordResetTokens, users } from '../db/schema.js';
+import { passwordResetTokens, refreshTokens, users } from '../db/schema.js';
 import { sendPasswordResetEmail } from '../email/mailer.js';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -130,6 +130,12 @@ router.post('/auth/password/reset', async (req: Request, res: Response, next: Ne
       }
 
       await tx.update(users).set({ passwordHash }).where(eq(users.id, consumed.userId));
+
+      // Sign out every existing session: refresh tokens issued before the reset stop working.
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.userId, consumed.userId), isNull(refreshTokens.revokedAt)));
     });
 
     res.status(200).json({ message: 'Password has been reset. You can sign in with your new password.' });

@@ -107,18 +107,26 @@ class Sha256 {
   }
 }
 
-export async function computeSha256(file: File): Promise<string> {
+/**
+ * SHA-256 of a file, read in fixed-size slices so a large file never has to
+ * fit in memory at once (mobile Safari kills tabs that allocate a whole
+ * multi-hundred-MB ArrayBuffer). Yields between slices to keep the UI live.
+ */
+export async function computeSha256(file: Blob, chunkSize: number = CHUNK_SIZE): Promise<string> {
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+    throw new RangeError('chunkSize must be a positive integer');
+  }
   const hasher = new Sha256();
   let offset = 0;
 
   while (offset < file.size) {
-    const end = Math.min(offset + CHUNK_SIZE, file.size);
+    const end = Math.min(offset + chunkSize, file.size);
     const chunk = new Uint8Array(await file.slice(offset, end).arrayBuffer());
     hasher.update(chunk);
     offset = end;
     if (offset < file.size) {
       await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 0);
+        globalThis.setTimeout(resolve, 0);
       });
     }
   }

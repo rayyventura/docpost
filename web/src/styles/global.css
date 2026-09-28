@@ -1428,20 +1428,68 @@ input[type="file"],
   box-shadow: 0 0 0 3px rgba(41, 37, 36, 0.08);
 }
 
-.drop-zone--active p:first-of-type,
-.file-picker--receiving .drop-zone p:first-of-type {
+.drop-zone--active .drop-zone-title,
+.file-picker--receiving .drop-zone .drop-zone-title {
   color: var(--color-primary);
 }
 
-.drop-zone p {
+.drop-zone {
+  position: relative;
+  display: block;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Visually hidden but present: a display:none input is not reliably
+   openable on mobile, and this keeps it keyboard focusable. */
+.drop-zone-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.drop-zone:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.drop-zone--disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.drop-zone-title,
+.drop-zone-hint {
+  display: block;
   color: var(--color-text-secondary);
   font-size: 0.8125rem;
 }
 
-.drop-zone p:first-of-type {
+.drop-zone-title {
   font-weight: 500;
   color: var(--color-text);
   margin-bottom: 0.25rem;
+}
+
+.drop-zone-copy--touch {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .drop-zone-copy--pointer {
+    display: none;
+  }
+
+  .drop-zone-copy--touch {
+    display: inline;
+  }
 }
 
 .drop-zone-hint {
@@ -2244,7 +2292,8 @@ input[type="file"],
   color: var(--color-success);
 }
 
-.status-failed {
+.status-failed,
+.status-completed-with-errors {
   background: var(--color-error-bg);
   color: var(--color-error);
 }
@@ -2601,7 +2650,23 @@ input[type="file"],
 }
 
 @media (max-width: 860px) {
+  /* The desktop shell is a fixed-height app with inner scroll panes and
+     html { overflow: hidden }. On phones everything stacks and grows, so the
+     page itself must scroll again - otherwise touch scrolling does nothing
+     and anything below the first screen (documents, the file chooser, the
+     Send button) is unreachable. */
+  html {
+    overflow: visible;
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
   .app-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
     height: auto;
     max-height: none;
     overflow: visible;
@@ -2610,21 +2675,109 @@ input[type="file"],
 
   .workspace {
     flex-direction: column;
+    min-height: 100vh;
     min-height: 100dvh;
+    overflow: visible;
+  }
+
+  /* Let every pane take its content height instead of clipping it. */
+  .workspace-stage,
+  .stage-panel--active,
+  .files-stage,
+  .files-pane,
+  .files-pane-body,
+  .new-job-page,
+  .send-pane-body,
+  .send-pane .file-picker,
+  .send-pane .file-list,
+  .job-dashboard,
+  .tab-panel--active {
+    flex: none;
+    min-height: 0;
+    max-height: none;
+    height: auto;
+    overflow: visible;
+  }
+
+  .job-dashboard-scroll {
+    flex: none;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: visible;
   }
 
   .workspace-rail {
     width: 100%;
+    min-width: 0;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+  }
+
+  .rail-tree-host {
+    flex: none;
   }
 
   .rail-tree {
     max-height: 18rem;
   }
 
+  .rail-tree .tree-scroll {
+    -webkit-overflow-scrolling: touch;
+  }
+
   .files-pane,
   .job-dashboard {
-    padding: 1.15rem 1.1rem 1rem;
+    padding: 1.15rem 1rem 1.5rem;
+    min-width: 0;
+  }
+
+  /* Stack the title above the search instead of squeezing it. */
+  .files-pane-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .files-pane-tools {
+    align-items: stretch;
+  }
+
+  .files-search-wrap {
+    width: 100%;
+  }
+
+  .files-pane-title {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
+
+  .doc-row {
+    gap: 12px;
+    padding: 12px 12px;
+  }
+
+  .files-pane .btn.item-download {
+    min-height: 40px;
+  }
+
+  .send-pane .drop-zone {
+    min-height: 140px;
+  }
+
+  .job-actions {
+    justify-content: stretch;
+  }
+
+  .send-button-wrap,
+  .job-actions .btn-primary {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .send-tooltip {
+    left: 0;
+    right: 0;
+    transform: none;
+    white-space: normal;
+    text-align: center;
   }
 }

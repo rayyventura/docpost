@@ -15,6 +15,19 @@ const registerSchema = z.object({
 
 const router = Router();
 
+// Postgres unique_violation on users.email. Drizzle wraps driver errors (DrizzleQueryError), so the
+// pg error may be the thrown error itself or its `cause`.
+function isDuplicateEmailError(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && typeof e === 'object' && depth < 3; depth++) {
+    const { code, constraint } = e as { code?: unknown; constraint?: unknown };
+    if (code === '23505') {
+      return constraint === undefined || constraint === 'users_email_unique';
+    }
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 // Every new account is added to every team currently in the platform database.
 // More granular permission access will be provided on demand in v2.
 async function assignUserToAllTeams(userId: string): Promise<void> {
@@ -53,10 +66,19 @@ router.post('/auth/register', async (req: Request, res: Response, next: NextFunc
       throw new ConflictError('Registration failed');
     }
 
-    const [newUser] = await db
-      .insert(users)
-      .values({ email, passwordHash, name })
-      .returning({ id: users.id, email: users.email, name: users.name });
+    let newUser: { id: string; email: string; name: string };
+    try {
+      [newUser] = await db
+        .insert(users)
+        .values({ email, passwordHash, name })
+        .returning({ id: users.id, email: users.email, name: users.name });
+    } catch (err) {
+      // A concurrent registration for the same email won the race after our pre-check.
+      if (isDuplicateEmailError(err)) {
+        throw new ConflictError('Registration failed');
+      }
+      throw err;
+    }
 
     try {
       await assignUserToAllTeams(newUser.id);

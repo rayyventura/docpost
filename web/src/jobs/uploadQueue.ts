@@ -1,5 +1,5 @@
 import { apiRequest } from '../api/client';
-import { fileContentType } from './FilePicker';
+import { fileContentType } from './fileSelection';
 import type { SelectedFile, JobSubmitResponse } from './types';
 
 const CONCURRENCY = 5;

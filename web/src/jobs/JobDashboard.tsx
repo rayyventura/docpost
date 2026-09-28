@@ -10,6 +10,7 @@ import { formatDate } from '../formatDate';
 import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
 import { applyJobCounts, applyTaskUpdate, countSegmentAction, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import { deliverySocketUrl } from './wsUrl';
+import { aggregateStatus, statusClass, statusLabel } from './jobStatus';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
   job: JobSummary | null;
@@ -59,18 +60,6 @@ function deliverySeed(state: unknown, jobId: string | undefined): {
   };
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  uploading: 'Uploading',
-  in_progress: 'In progress',
-  completed: 'Completed',
-  failed: 'Failed',
-};
-
-function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status.replaceAll('_', ' ');
-}
-
 const MAX_ATTEMPTS = 3;
 
 function exhaustedFailureReason(task: TaskDetail): string {
@@ -115,10 +104,6 @@ function displayTask(task: TaskDetail): TaskDetail {
   return task;
 }
 
-function statusClass(status: string): string {
-  return `status-badge status-${status.replaceAll('_', '-')}`;
-}
-
 function destinationText(task: TaskDetail): string {
   if (task.destination?.trim()) return task.destination;
   const folders = (task.folderPath ?? []).map((segment) =>
@@ -155,14 +140,6 @@ function documentsLocation(task: TaskDetail): FilesLocationState | null {
 function uploadedByLine(name: string, createdAt: string): string {
   const when = formatDate(createdAt, true).replace(', ', ' ');
   return `Uploaded by ${name.toUpperCase()}, ${when}`;
-}
-
-function aggregateStatus(counts: JobSummary['counts']): string {
-  const total = counts.pending + counts.in_progress + counts.completed + counts.failed;
-  if (total === 0 || counts.pending === total) return 'pending';
-  if (counts.completed === total) return 'completed';
-  if (counts.failed > 0 && counts.pending === 0 && counts.in_progress === 0) return 'failed';
-  return 'in_progress';
 }
 
 const ACTIVE_POLL_MS = 750;
@@ -602,7 +579,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
                       <span className="task-upload-progress-label">{upload.progress}%</span>
                     </div>
                   ) : t.failureReason ? (
-                    <span className="failure-reason">{formatFailureReason(t.failureReason)}</span>
+                    <span className="failure-reason" title={t.failureReason}>
+                      {formatFailureReason(t.failureReason)}
+                    </span>
+                  ) : t.status === 'failed' ? (
+                    <span className="failure-reason">Delivery failed. No reason was recorded.</span>
                   ) : null}
                 </td>
               </tr>

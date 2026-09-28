@@ -16,6 +16,7 @@ import {
 import { parseIngestBody } from '../lib/ingest.js';
 import { assertFolderDestinations } from '../lib/folderDestinations.js';
 import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
+import { isUuid } from '../lib/ids.js';
 
 const router = Router();
 
@@ -26,6 +27,11 @@ router.get(
     try {
       const userId = req.user!.sub;
       const documentId = req.params.documentId as string;
+      // A malformed id is reported like an unknown document.
+      if (!isUuid(documentId)) {
+        throw new NotFoundError('Document not found');
+      }
+
       const db = getDb();
 
       const [document] = await db
@@ -46,6 +52,10 @@ router.get(
 
       if (binderResult.length === 0) {
         throw new NotFoundError('Document not found');
+      }
+
+      if (!isUuid(userId)) {
+        throw new ForbiddenError();
       }
 
       const membership = await db
@@ -131,7 +141,7 @@ router.post(
       }
 
       const staging = await headStagingObject(metadata.s3Key);
-      assertObjectMatchesIngest(staging, metadata.sizeBytes, metadata.checksumSha256);
+      await assertObjectMatchesIngest(metadata.s3Key, staging, metadata.sizeBytes, metadata.checksumSha256);
 
       const insertResult = await db
         .insert(documents)
