@@ -1,40 +1,14 @@
-import express from 'express';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { allowOptions, errorHandler } from '@docpost/shared';
 import { initKeys, getKid } from './crypto/keys.js';
-import registerRouter from './routes/register.js';
-import loginRouter from './routes/login.js';
-import refreshRouter from './routes/refresh.js';
-import passwordResetRouter from './routes/password-reset.js';
-import tokenRouter from './routes/token.js';
-import jwksRouter from './routes/jwks.js';
+import { createApp } from './app.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const app = express();
+const app = createApp();
 const PORT = process.env.PORT ?? 3001;
-
-app.use(allowOptions);
-app.use(express.json());
-
-// Health check
-app.get('/health', (_req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
-
-// Mount routes
-app.use(registerRouter);
-app.use(loginRouter);
-app.use(refreshRouter);
-app.use(passwordResetRouter);
-app.use(tokenRouter);
-app.use(jwksRouter);
-
-// Error handler (must be after routes)
-app.use(errorHandler);
 
 async function start() {
   // Initialize RSA key pair

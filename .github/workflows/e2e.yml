@@ -1,0 +1,107 @@
+name: E2E (dev)
+
+# Runs e2e/deployed-send.e2e.test.mjs against the deployed dev environment.
+# Manual only: every run creates a real job and real documents in dev.
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_ms:
+        description: 'How long to wait for the job to finish, in ms (E2E_TIMEOUT_MS). Empty = test default (300000).'
+        required: false
+        default: ''
+
+concurrency:
+  group: e2e-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: dev
+  DEPLOY_ENABLED: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check credentials
+        id: creds
+        env:
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: |
+          if [ -z "$E2E_EMAIL" ] || [ -z "$E2E_PASSWORD" ]; then
+            echo "::warning::Skipping e2e: repository secrets E2E_EMAIL and E2E_PASSWORD must both be set."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.run == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.run == 'true'
+        with:
+          node-version: 22
+
+      # Same OIDC pattern as deploy-auth.yml: only when the deploy role is configured.
+      - name: Configure AWS credentials
+        if: steps.creds.outputs.run == 'true' && env.DEPLOY_ENABLED == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve API base
+        id: api
+        if: steps.creds.outputs.run == 'true'
+        env:
+          VAR_API_BASE: ${{ vars.E2E_API_BASE }}
+        run: |
+          api_base=""
+          if [ "$DEPLOY_ENABLED" = "true" ]; then
+            if out="$(aws ssm get-parameter --name "/docpost/${ENVIRONMENT}/api_base" --query Parameter.Value --output text 2>&1)"; then
+              api_base="$out"
+              echo "API base from SSM /docpost/${ENVIRONMENT}/api_base"
+            elif grep -q ParameterNotFound <<<"$out"; then
+              echo "::warning::Skipping e2e: /docpost/${ENVIRONMENT}/api_base not found, so dev is probably down."
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "$out" >&2
+              exit 1
+            fi
+          elif [ -n "$VAR_API_BASE" ]; then
+            api_base="$VAR_API_BASE"
+            echo "API base from repository variable E2E_API_BASE"
+          else
+            echo "::warning::Skipping e2e: set the AWS_DEPLOY_ROLE_ARN secret (reads SSM /docpost/${ENVIRONMENT}/api_base) or the E2E_API_BASE repository variable."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "api_base=$api_base" >> "$GITHUB_OUTPUT"
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      # No npm ci: the test only uses Node built-ins. With no E2E_FILES and no
+      # local test PDFs, it generates three small PDFs at runtime.
+      - name: Run e2e test
+        if: steps.creds.outputs.run == 'true' && steps.api.outputs.run == 'true'
+        env:
+          E2E_API_BASE: ${{ steps.api.outputs.api_base }}
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+          E2E_FOLDER_IDS: ${{ vars.E2E_FOLDER_IDS }}
+          TIMEOUT_INPUT: ${{ inputs.timeout_ms }}
+        run: |
+          if [ -n "$TIMEOUT_INPUT" ]; then
+            case "$TIMEOUT_INPUT" in
+              *[!0-9]*) echo "::error::timeout_ms must be a whole number of milliseconds"; exit 1 ;;
+            esac
+            export E2E_TIMEOUT_MS="$TIMEOUT_INPUT"
+          fi
+          # An empty E2E_FOLDER_IDS means "discover", which the test already treats as unset.
+          node --test 'e2e/*.test.mjs'

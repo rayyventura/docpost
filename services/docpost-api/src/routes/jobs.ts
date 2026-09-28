@@ -391,7 +391,7 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
 
 // ---------- Helpers ----------
 
-function computeAggregateStatus(counts: Record<string, number>): string {
+export function computeAggregateStatus(counts: Record<string, number>): string {
   const { pending = 0, in_progress = 0, completed = 0, failed = 0 } = counts;
   const total = pending + in_progress + completed + failed;
   if (total === 0) return 'pending';
