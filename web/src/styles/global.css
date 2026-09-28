@@ -103,6 +103,9 @@ body {
 
 .app-main {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   max-width: 1120px;
   width: 100%;
   margin: 0 auto;
@@ -483,7 +486,15 @@ body {
 }
 
 /* ===== Breadcrumb ===== */
+.distribute-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .destinations-page {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -505,8 +516,9 @@ body {
 }
 
 .destinations-content {
-  height: min(36rem, calc(100vh - 18rem));
+  flex: 1;
   min-height: 20rem;
+  height: auto;
 }
 
 .destinations-content .dest-tree {
@@ -516,7 +528,7 @@ body {
 .dest-tree .page-loading {
   flex: 1;
   min-height: 0;
-  height: auto;
+  height: 100%;
 }
 
 .documents-tree > .error-banner {
@@ -778,7 +790,10 @@ body {
 }
 
 .tab-panel--active {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 @keyframes tabFadeIn {
@@ -794,6 +809,10 @@ body {
 
 /* ===== New Job Page ===== */
 .new-job-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding-top: 0.25rem;
 }
 
@@ -1047,8 +1066,9 @@ body {
   grid-template-rows: minmax(0, 1fr);
   gap: 1.5rem;
   margin-bottom: 1rem;
-  height: min(36rem, calc(100vh - 18rem));
+  flex: 1;
   min-height: 22rem;
+  height: auto;
   overflow: hidden;
 }
 
@@ -1538,13 +1558,16 @@ body {
 
 /* ===== Job Dashboard ===== */
 .job-dashboard {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   padding-top: 0.5rem;
 }
 
 .job-dashboard > .page-loading {
-  min-height: min(36rem, calc(100vh - 20rem));
+  flex: 1;
+  min-height: 12rem;
   height: auto;
 }
 
