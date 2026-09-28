@@ -96,7 +96,6 @@ The client needs a tool, that lets a user:
 * Once the submission is confirmed, the system acknowledges the request in under 500 ms and immediately displays the newly created job with all tasks in the **Pending** state.  
 * Background workers independently verify each uploaded file and deliver it to the appropriate regional document platform. Transient failures are automatically retried at least three times.  
   **Expected outcome:** Every task eventually reaches either the **Completed** or **Failed** state, with failures reporting a clear reason (+DLQ). A failure affecting one task does not impact the processing of any other task.  
-  ---
 
   ## **Flow 3: Monitor a job**
 
@@ -105,7 +104,6 @@ The client needs a tool, that lets a user:
 * Selecting a job reveals every task, including its file, destination, and current processing status (**Pending**, **In Progress**, **Completed**, or **Failed**).  
 * Task status changes are pushed to the interface automatically without requiring the user to refresh the page.  
   **Expected outcome:** The user can quickly determine whether every file has been delivered to every selected destination and, if any delivery fails, identify the affected file, destination, and failure reason. User should also be able to see the audit of past jobs and tasks.  
-  ---
 
   ## **Flow 4: Download a staged file**
 
@@ -298,9 +296,9 @@ One job generates up to 2,000 tasks, The job’s dashboard is a core feature, an
 
 # **Decision:** WebSockets
 
-#  All three options are technically viable at the expected system scale. The decision is therefore based on architectural consistency and product experience rather than capacity.
+  All three options are technically viable at the expected system scale. The decision is therefore based on architectural consistency and product experience rather than capacity.
 
-# API Gateway WebSocket API provides near-real-time status updates while keeping all application services private. Both HTTP and WebSocket client traffic enter through AWS-managed edge services, preserving the security posture established in ADR-001.
+ API Gateway WebSocket API provides near-real-time status updates while keeping all application services private. Both HTTP and WebSocket client traffic enter through AWS-managed edge services, preserving the security posture established in ADR-001.
 
 
 **Refined By:** Rayane Ventura
@@ -322,11 +320,11 @@ One job generates up to 2,000 tasks, and the job needs to be acknowledged in und
 
 # **Decision:** Separate Job Queue and Task Queue.
 
-# On job submission, the API writes the job and all associated task records in a single database transaction, publishes a single job message to the Job Queue, and immediately returns the acknowledgement. A Fan out consumer processes the job message, retrieves the task IDs from the database, and publishes one message per task to the Task Queue using batched SQS sends.
+ On job submission, the API writes the job and all associated task records in a single database transaction, publishes a single job message to the Job Queue, and immediately returns the acknowledgement. A Fan out consumer processes the job message, retrieves the task IDs from the database, and publishes one message per task to the Task Queue using batched SQS sends.
 
-# Using a dedicated Job Queue makes the fan-out stage independently retryable. If the fan-out consumer fails while publishing task messages, SQS redelivers the job message and fan-out resumes, ensuring that no work is silently lost before delivery begins.
+ Using a dedicated Job Queue makes the fan-out stage independently retryable. If the fan-out consumer fails while publishing task messages, SQS redelivers the job message and fan-out resumes, ensuring that no work is silently lost before delivery begins.
 
-# Task records are created as part of the submission transaction rather than by the fan-out consumer. As a result, the job dashboard can display the complete list of tasks in the Pending state immediately after the submission acknowledgement is returned. The fan-out component is therefore responsible only for enqueuing already-persisted work, making it a naturally idempotent operation.
+ Task records are created as part of the submission transaction rather than by the fan-out consumer. As a result, the job dashboard can display the complete list of tasks in the Pending state immediately after the submission acknowledgement is returned. The fan-out component is therefore responsible only for enqueuing already-persisted work, making it a naturally idempotent operation.
 
 **Refined By:** Rayane Ventura
 
@@ -348,9 +346,9 @@ DocPost consists of three services with clear data ownership. The Auth service (
 
 # **Decision:** One PostgreSQL instance with three isolated logical databases (Authentication, Platform, and DocPost), each accessible only through its owning service's credentials.
 
-* # This approach enforces data ownership by preventing direct cross-service database access and eliminating cross-service joins. It also aligns infrastructure cost with the expected workload, avoiding the operational overhead of running a separate PostgreSQL instance for each service at the current scale.
+*  This approach enforces data ownership by preventing direct cross-service database access and eliminating cross-service joins. It also aligns infrastructure cost with the expected workload, avoiding the operational overhead of running a separate PostgreSQL instance for each service at the current scale.
 
-* # The trade-off is accepted explicitly: when DocPost needs to authorize access to a destination, it calls the Platform service's API rather than querying its membership tables directly. This preserves service boundaries and ensures each service remains the sole owner of its data.
+*  The trade-off is accepted explicitly: when DocPost needs to authorize access to a destination, it calls the Platform service's API rather than querying its membership tables directly. This preserves service boundaries and ensures each service remains the sole owner of its data.
 
   # 
 
@@ -374,15 +372,15 @@ With one instance and 3 separate logical databases, each one could use its own e
 
 # **Decision:** PostgreSQL for all three services.
 
-# Every identified workload falls comfortably within PostgreSQL’s expected capabilities. The alternatives each require sacrificing a property the system currently needs:
+ Every identified workload falls comfortably within PostgreSQL’s expected capabilities. The alternatives each require sacrificing a property the system currently needs:
 
-* # DynamoDB weakens atomic job submission and makes status aggregation more complex.
+*  DynamoDB weakens atomic job submission and makes status aggregation more complex.
 
-* # A document database complicates subtree moves, permissions, and cross-entity consistency.
+*  A document database complicates subtree moves, permissions, and cross-entity consistency.
 
-* # Using multiple database engines would add operational overhead without a measured benefit.
+*  Using multiple database engines would add operational overhead without a measured benefit.
 
-# File contents are explicitly outside the scope of the database. Uploaded files are stored in the encrypted S3 staging store, while PostgreSQL stores only their metadata, storage references, sizes, content types, and integrity checksums.
+ File contents are explicitly outside the scope of the database. Uploaded files are stored in the encrypted S3 staging store, while PostgreSQL stores only their metadata, storage references, sizes, content types, and integrity checksums.
 
 
 **Refined By:** Rayane Ventura
@@ -405,13 +403,13 @@ Workers consume SQS messages: fan-out (one job, multiple tasks) and delivery (fe
 
 # **Decision:** AWS Lambda with SQS event source mappings
 
-* # Implemented as two independent functions: a Fan-out function consuming the (Job Queue) and a Delivery function consuming the (Task Queue). Small WebSocket lifecycle handlers (`$connect`, `$disconnect`, and `$default`/`subscribe`) will also be implemented as Lambda functions.
+*  Implemented as two independent functions: a Fan-out function consuming the (Job Queue) and a Delivery function consuming the (Task Queue). Small WebSocket lifecycle handlers (`$connect`, `$disconnect`, and `$default`/`subscribe`) will also be implemented as Lambda functions.
 
-* # The workload consists of large numbers of short lived, independent messages, making it well suited to Lambda's event-driven execution model. Automatic scaling, pay-per-use pricing, and native integration with SQS retries and DLQ provide the simplest operational model while meeting the expected workload characteristics.
+*  The workload consists of large numbers of short lived, independent messages, making it well suited to Lambda's event-driven execution model. Automatic scaling, pay-per-use pricing, and native integration with SQS retries and DLQ provide the simplest operational model while meeting the expected workload characteristics.
 
 * 
 
-#  d
+#  
 
 **Refined By:** Rayane Ventura
 
@@ -433,7 +431,7 @@ All AWS resources for DocPost (VPC, RDS, ECS services, SQS, S3, KMS, API Gateway
 
 # **Decision:** Terraform using HCL 
 
-# The deciding factors are the project’s learning objective and Terraform’s professional value. Terraform’s `plan` and `apply` workflow makes infrastructure changes explicit and reviewable: every proposed creation, update, or deletion can be inspected before it is applied.
+ The deciding factors are the project’s learning objective and Terraform’s professional value. Terraform’s `plan` and `apply` workflow makes infrastructure changes explicit and reviewable: every proposed creation, update, or deletion can be inspected before it is applied.
 
 
 # **ADR-013**: Worker authentication to the platform 
@@ -454,15 +452,15 @@ Delivery workers call the document platform POST /documents to ingest files . Ev
 
 # **Decision:** Service token issued by the Authentication service.
 
-# The Delivery worker authenticates with the Authentication service using its own client credential and receives a short-lived, scoped service JWT. It then sends that JWT to the Platform service together with the `onBehalfOf` user identifier.
+ The Delivery worker authenticates with the Authentication service using its own client credential and receives a short-lived, scoped service JWT. It then sends that JWT to the Platform service together with the `onBehalfOf` user identifier.
 
-# This preserves a single verification path in the Platform service: every caller, whether a user or an internal service, presents a JWT validated against the same JWKS. The service token provides the worker with a scoped, short-lived, and auditable identity while keeping service authentication separate from user authorization:
+ This preserves a single verification path in the Platform service: every caller, whether a user or an internal service, presents a JWT validated against the same JWKS. The service token provides the worker with a scoped, short-lived, and auditable identity while keeping service authentication separate from user authorization:
 
-* # The service token answers **“Who is calling?”**
+*  The service token answers **“Who is calling?”**
 
-* # The `onBehalfOf` user and current membership check answer **“Is this delivery allowed?”**
+*  The `onBehalfOf` user and current membership check answer **“Is this delivery allowed?”**
 
-# The Platform service does not treat `onBehalfOf` as authorization by itself. It accepts the value only from a trusted service token with the required scope and then revalidates the user’s access to the destination at delivery time. This preserves the required time-of-use authorization check.
+ The Platform service does not treat `onBehalfOf` as authorization by itself. It accepts the value only from a trusted service token with the required scope and then revalidates the user’s access to the destination at delivery time. This preserves the required time-of-use authorization check.
 
 The Authentication service becoming a runtime dependency is accepted. Delivery already has a transient-failure path through SQS retries and the DLQ, and Authentication is expected to be the smallest, most stable, and least frequently deployed service in the system.
 
