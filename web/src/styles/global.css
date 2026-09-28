@@ -342,22 +342,23 @@ body {
 
 .error-banner--dismissible {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
 }
 
 .error-banner-dismiss {
   flex-shrink: 0;
-  margin: -0.25rem -0.25rem -0.25rem 0;
-  padding: 0.25rem 0.5rem;
+  margin: 0;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: inherit;
   font-weight: 600;
+  line-height: inherit;
   cursor: pointer;
 }
 
@@ -382,7 +383,11 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
   min-height: 12rem;
+  height: 100%;
   padding: 2rem 1rem;
 }
 
@@ -506,6 +511,20 @@ body {
 
 .destinations-content .dest-tree {
   height: 100%;
+}
+
+.dest-tree .page-loading {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.documents-tree > .error-banner {
+  flex-shrink: 0;
+  width: calc(100% - 2.3rem);
+  margin: 0.75rem auto 0.5rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
 }
 
 .destinations-toolbar .breadcrumb {
@@ -821,8 +840,13 @@ body {
   display: inline-flex;
 }
 
+.send-button-wrap:has(.btn:disabled) {
+  cursor: not-allowed;
+}
+
 .send-button-wrap .btn:disabled {
   pointer-events: none;
+  cursor: not-allowed;
 }
 
 .send-tooltip {
@@ -1508,7 +1532,14 @@ body {
 
 /* ===== Job Dashboard ===== */
 .job-dashboard {
+  display: flex;
+  flex-direction: column;
   padding-top: 0.5rem;
+}
+
+.job-dashboard > .page-loading {
+  min-height: min(36rem, calc(100vh - 20rem));
+  height: auto;
 }
 
 .job-dashboard--details {

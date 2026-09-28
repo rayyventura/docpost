@@ -30,6 +30,7 @@ interface DestinationTreeProps {
   selected: Destination[];
   onChange: (destinations: Destination[]) => void;
   revealFolderPath?: string[];
+  revealFolderId?: string;
 }
 
 function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
@@ -63,7 +64,7 @@ function Expander({
   );
 }
 
-export function DestinationTree({ selected, onChange, revealFolderPath = [] }: DestinationTreeProps) {
+export function DestinationTree({ selected, onChange, revealFolderPath = [], revealFolderId }: DestinationTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
 
@@ -76,6 +77,9 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
   const [emptyNodes, setEmptyNodes] = useState<Set<string>>(new Set());
 
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
+  const [revealing, setRevealing] = useState(Boolean(revealFolderId));
+  const [focusFolderId, setFocusFolderId] = useState<string | null>(null);
+  const revealedToken = useRef<string | null>(null);
   const bindersByTeamRef = useRef(bindersByTeam);
   const foldersByParentRef = useRef(foldersByParent);
   bindersByTeamRef.current = bindersByTeam;
@@ -249,10 +253,27 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
   );
 
   useEffect(() => {
+    if (!revealFolderId) {
+      setRevealing(false);
+      return;
+    }
+
+    const token = `${revealFolderId}:${revealFolderPath.join(',')}`;
+    if (revealedToken.current === token) {
+      setRevealing(false);
+      return;
+    }
+
+    setRevealing(true);
+    setFocusFolderId(null);
+
     if (loadingTeams || selected.length === 0) return;
 
-    const dest = selected[selected.length - 1];
-    if (!dest.binderId) return;
+    const dest = selected.find((item) => item.folderId === revealFolderId) ?? selected[selected.length - 1];
+    if (!dest.binderId) {
+      setRevealing(false);
+      return;
+    }
 
     let cancelled = false;
 
@@ -374,13 +395,43 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
         }
         siblings = children;
       }
+
+      if (!cancelled) {
+        setFocusFolderId(dest.folderId ?? revealFolderId);
+      }
     };
 
-    void reveal();
+    void reveal().catch((err) => {
+      console.error(err);
+    }).finally(() => {
+      if (!cancelled) {
+        revealedToken.current = token;
+        setRevealing(false);
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [loadingTeams, selected, revealFolderPath, teams]);
+  }, [loadingTeams, selected, revealFolderPath, revealFolderId, teams]);
+
+  useEffect(() => {
+    if (revealing || !focusFolderId) return;
+    let tries = 0;
+    let frame = 0;
+    const find = () => {
+      const row = document.querySelector<HTMLElement>(`[data-folder-id="${focusFolderId}"]`);
+      if (row) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (tries < 12) {
+        tries += 1;
+        frame = requestAnimationFrame(find);
+      }
+    };
+    find();
+    return () => cancelAnimationFrame(frame);
+  }, [revealing, focusFolderId, foldersByParent, expandedFolders, expandedBinders]);
 
   const isSelected = useCallback(
     (d: { teamId: string; binderId?: string | null; folderId?: string | null }): boolean =>
@@ -425,7 +476,11 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
 
       return (
         <div key={folder.id}>
-          <div className="tree-row" style={{ paddingLeft: `${depth * 20}px` }}>
+          <div
+            className={`tree-row${isSelected(dest) ? ' tree-row--active' : ''}${focusFolderId === folder.id ? ' tree-row-doc--focus' : ''}`}
+            style={{ paddingLeft: `${depth * 20}px` }}
+            data-folder-id={folder.id}
+          >
             <Expander
               loading={isLoading}
               expandable={hasChildren}
@@ -447,11 +502,11 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [] }: D
     });
   }
 
-  if (loadingTeams) {
+  if (loadingTeams || revealing) {
     return (
       <div className="dest-tree">
         <div className="tree-panel-header">Destinations</div>
-        <PageLoading label="Loading destinations" />
+        <PageLoading label={revealing ? 'Opening the destination' : 'Loading destinations'} />
       </div>
     );
   }

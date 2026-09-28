@@ -167,6 +167,9 @@ export function NewJobPage() {
             selected={destinations}
             onChange={setDestinations}
             revealFolderPath={revealFolderPath}
+            revealFolderId={
+              (location.state as SendLocationState | null)?.destination?.folderId ?? undefined
+            }
           />
         </div>
         <div className="panel-right">

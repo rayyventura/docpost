@@ -393,6 +393,10 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
 
         if (match) {
           setFocusDocumentId(match.id);
+          setDownloadError('');
+        } else if (reveal.documentId || reveal.fileName) {
+          setFocusDocumentId(null);
+          setDownloadError('Document not found');
         } else {
           setFocusDocumentId(null);
         }

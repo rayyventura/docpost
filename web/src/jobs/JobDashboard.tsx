@@ -120,6 +120,9 @@ function statusClass(status: string): string {
 }
 
 function documentsLocation(task: TaskDetail): FilesLocationState | null {
+  if (task.status === 'failed' || task.status === 'pending' || task.status === 'uploading') {
+    return null;
+  }
   if (!task.teamId || !task.binderId || !task.teamName || !task.binderName) {
     return null;
   }
@@ -521,6 +524,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           <tbody>
             {visibleTasks.map((t) => {
               const upload = uploadForTask(t, uploads);
+              const filesLocation = documentsLocation(t);
               return (
               <tr
                 key={t.taskId}
@@ -531,13 +535,17 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
                 <td className="task-file">{t.fileName ?? t.fileId.slice(0, 8)}</td>
                 <td className="task-destination">
                   {t.destination ? (
-                    <Link
-                      to="/"
-                      state={documentsLocation(t)}
-                      className="task-destination-link"
-                    >
-                      {t.destination}
-                    </Link>
+                    filesLocation ? (
+                      <Link
+                        to="/"
+                        state={filesLocation}
+                        className="task-destination-link"
+                      >
+                        {t.destination}
+                      </Link>
+                    ) : (
+                      t.destination
+                    )
                   ) : (
                     '-'
                   )}
