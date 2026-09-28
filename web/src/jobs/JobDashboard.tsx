@@ -462,19 +462,18 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             </span>
           </div>
           <div className="counts-bar" role="group" aria-label="Jump to a delivery status">
-            {COUNT_SEGMENTS.map((segment) => {
+            {COUNT_SEGMENTS.filter((segment) => visibleJob.counts[segment.countKey] > 0).map((segment) => {
               const count = visibleJob.counts[segment.countKey];
               return (
                 <button
                   key={segment.key}
                   type="button"
-                  className={`count-segment count-${segment.key}${count === 0 ? ' count-segment--empty' : ''}`}
-                  style={{ width: `${(count / visibleJob.taskCount) * 100}%` }}
-                  disabled={count === 0}
+                  className={`count-segment count-${segment.key}`}
+                  style={{ flex: count }}
                   aria-label={`Jump to the first ${segment.label} item`}
                   onClick={() => handleCountSegment(segment.status, count)}
                 >
-                  {count > 0 ? count : null}
+                  {count}
                 </button>
               );
             })}
