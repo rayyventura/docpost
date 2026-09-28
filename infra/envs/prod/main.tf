@@ -312,7 +312,8 @@ module "ecs_docpost_api" {
     AUTH_JWKS_URL  = "http://${module.alb.alb_dns_name}/.well-known/jwks.json"
     AUTH_TOKEN_URL = "http://${module.alb.alb_dns_name}/auth/token"
     S3_BUCKET      = module.s3.staging_bucket_name
-    JOB_QUEUE_URL  = module.sqs.queue_urls["jobs"]
+    JOB_QUEUE_URL                 = module.sqs.queue_urls["jobs"]
+    TOTAL_SUPPORTED_DESTINATIONS  = tostring(var.total_supported_destinations)
   }
 }
 

@@ -90,6 +90,7 @@ jobs:
         env:
           VITE_API_BASE: ${{ steps.ssm.outputs.api_base }}
           VITE_WS_URL: ${{ steps.ssm.outputs.ws_url }}
+          VITE_TOTAL_SUPPORTED_DESTINATIONS: "20"
         run: |
           echo "VITE_API_BASE=$VITE_API_BASE"
           echo "VITE_WS_URL=$VITE_WS_URL"

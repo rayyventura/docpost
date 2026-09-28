@@ -1,3 +1,4 @@
+import { FOLDER_DESTINATION_REQUIRED } from '@docpost/shared';
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
 import { S3Client, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { eq, and, sql, inArray } from 'drizzle-orm';
@@ -146,6 +147,18 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
     fileName = file.originalName;
 
+    if (!claimed.folderId) {
+      await failTask(
+        db,
+        claimed,
+        failureReason('INVALID_DESTINATION', {
+          fileName: file.originalName,
+          reason: FOLDER_DESTINATION_REQUIRED,
+        }),
+      );
+      return;
+    }
+
     try {
       await getS3().send(new HeadObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
     } catch {
@@ -165,7 +178,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
     const metadata = JSON.stringify({
       taskId: claimed.id,
       binderId: claimed.binderId,
-      folderId: claimed.folderId ?? undefined,
+      folderId: claimed.folderId,
       name: file.originalName,
       contentType: file.contentType,
       checksumSha256: file.checksumSha256,
@@ -222,10 +235,17 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       }
 
       if (res.status === 422) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { code?: string; message?: string };
+        } | null;
+        const code = body?.error?.code === 'CHECKSUM_MISMATCH' ? 'CHECKSUM_MISMATCH' : 'INVALID_DESTINATION';
         await failTask(
           db,
           claimed,
-          failureReason('CHECKSUM_MISMATCH', { fileName: file.originalName }),
+          failureReason(code, {
+            fileName: file.originalName,
+            ...(body?.error?.message ? { reason: body.error.message } : {}),
+          }),
         );
         return;
       }

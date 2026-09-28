@@ -426,9 +426,9 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         <p className="page-lead">
           An audit of each send: who filed what, where it was placed, and whether it completed.
           <br />
-          The documents themselves are in the{' '}
+          The documents themselves are in{' '}
           <Link to="/" className="page-lead-link">
-            Documents tab
+            Documents
           </Link>
           .
         </p>
@@ -437,7 +437,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           <PageLoading label="Loading deliveries" />
         ) : jobs.length === 0 ? (
           <ContentReveal>
-            <p className="empty-state">Nothing has been sent yet. Use Send documents to place them in a destination.</p>
+            <p className="empty-state">Nothing has been sent yet. Use Distribute documents to place them in a destination.</p>
           </ContentReveal>
         ) : (
           <ContentReveal>
@@ -470,7 +470,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     <div className="job-dashboard job-dashboard--details">
       <div className="dashboard-header">
         <button className="btn" onClick={() => void navigate('/deliveries')}>
-          &larr; Delivery audit
+          &larr; Audit trail
         </button>
         <h2>Delivery Details</h2>
       </div>

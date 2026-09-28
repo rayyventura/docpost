@@ -18,5 +18,8 @@ ecs_cpu           = 256
 ecs_memory        = 512
 ecs_desired_count = 1
 
+# Max folders per send. Raise only after load-testing fanout, SQS, and delivery.
+total_supported_destinations = 20
+
 # SPA CORS — permissive in dev
 spa_cors_origins = ["*"]

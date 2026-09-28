@@ -3,6 +3,7 @@ import { apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
 import type { Destination } from './types';
+import { blockedDestinationsMessage } from './destinationLimit';
 
 interface Team {
   id: string;
@@ -31,6 +32,7 @@ interface DestinationTreeProps {
   onChange: (destinations: Destination[]) => void;
   revealFolderPath?: string[];
   revealFolderId?: string;
+  maxDestinations?: number;
 }
 
 function destKey(d: { teamId: string; binderId?: string | null; folderId?: string | null }): string {
@@ -84,7 +86,13 @@ function Expander({
   );
 }
 
-export function DestinationTree({ selected, onChange, revealFolderPath = [], revealFolderId }: DestinationTreeProps) {
+export function DestinationTree({
+  selected,
+  onChange,
+  revealFolderPath = [],
+  revealFolderId,
+  maxDestinations,
+}: DestinationTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
 
@@ -474,9 +482,13 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
         return;
       }
 
+      if (maxDestinations !== undefined && selected.length >= maxDestinations) {
+        return;
+      }
+
       onChange([...selected, dest]);
     },
-    [selected, onChange],
+    [selected, onChange, maxDestinations],
   );
 
   function renderFolders(parentKey: string, depth: number) {
@@ -499,6 +511,11 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
         folderName: folder.name,
         folderPath: folderAncestorPath(folder, foldersByParent),
       };
+      const blocked =
+        !isSelected(dest)
+        && maxDestinations !== undefined
+        && selected.length >= maxDestinations;
+      const blockedReason = blocked ? blockedDestinationsMessage(maxDestinations) : undefined;
 
       return (
         <div key={folder.id}>
@@ -513,13 +530,22 @@ export function DestinationTree({ selected, onChange, revealFolderPath = [], rev
               expanded={isExpanded}
               onClick={() => toggleFolder(folder)}
             />
-            <label className="tree-check-label">
+            <label
+              className={`tree-check-label${blocked ? ' tree-check-label--blocked' : ''}`}
+              title={blockedReason}
+            >
               <input
                 type="checkbox"
                 checked={isSelected(dest)}
+                disabled={blocked}
                 onChange={() => toggleDestination(dest)}
               />
               <span className="tree-name">{folder.name}</span>
+              {blockedReason && (
+                <span className="tree-cap-tooltip" role="tooltip">
+                  {blockedReason}
+                </span>
+              )}
             </label>
           </div>
           {isExpanded && renderFolders(childKey, depth + 1)}

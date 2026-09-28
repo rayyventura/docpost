@@ -3,6 +3,7 @@ import { apiDownload, apiRequest } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
 import { formatDate } from '../formatDate';
+import { SidebarTree } from '../layout/SidebarTree';
 import type { Destination, FilesLocationState, SendLocationState } from '../jobs/types';
 import { BinderIcon } from './BinderIcon';
 import { TeamIcon } from './TeamIcon';
@@ -42,6 +43,11 @@ interface NodeContents {
   documents: DocumentNode[];
 }
 
+type SelectedNode =
+  | { kind: 'team'; team: Team }
+  | { kind: 'binder'; binder: Binder }
+  | { kind: 'folder'; folder: FolderNode; path: string[] };
+
 interface DocumentsTreeProps {
   reveal?: FilesLocationState | null;
   onSendHere: (target: SendLocationState) => void;
@@ -79,16 +85,6 @@ function FolderIcon() {
         stroke="currentColor"
         strokeWidth="1.5"
       />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="file-icon">
-      <path d="M7 3.75h6.2L18.5 9v11.25A1.75 1.75 0 0 1 16.75 22H7.25A1.75 1.75 0 0 1 5.5 20.25V5.5A1.75 1.75 0 0 1 7.25 3.75Z" fill="currentColor" opacity="0.12" />
-      <path d="M13 3.75V8.5h5.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M7 3.75h6.2L18.5 9v11.25A1.75 1.75 0 0 1 16.75 22H7.25A1.75 1.75 0 0 1 5.5 20.25V5.5A1.75 1.75 0 0 1 7.25 3.75Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }
@@ -147,6 +143,10 @@ function folderSegmentId(segment: { id?: string } | string | undefined): string 
   return typeof segment === 'string' ? segment : segment.id;
 }
 
+function documentCount(contents: NodeContents | undefined): number {
+  return contents?.documents.length ?? 0;
+}
+
 export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
@@ -158,7 +158,9 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   const [bindersByTeam, setBindersByTeam] = useState<Map<string, Binder[]>>(new Map());
   const [contentsByParent, setContentsByParent] = useState<Map<string, NodeContents>>(new Map());
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
-  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectedNode | null>(null);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   const [focusDocumentId, setFocusDocumentId] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(Boolean(reveal?.teamId && reveal.binderId));
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -176,6 +178,20 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
       .then(setTeams)
       .catch(console.error)
       .finally(() => setLoadingTeams(false));
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
+      if (event.repeat) return;
+      const search = searchRef.current;
+      if (!search) return;
+      event.preventDefault();
+      search.focus();
+      search.select();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const markLoading = useCallback((key: string, on: boolean) => {
@@ -307,8 +323,25 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
     markLoading(parentKey, false);
   }, [expandedFolders, loadContents, markLoading]);
 
-  const selectFolder = useCallback((folder: FolderNode) => {
-    setActiveFolderId(folder.id);
+  const selectTeam = useCallback((team: Team) => {
+    setSelected({ kind: 'team', team });
+    setQuery('');
+    if (!expandedTeams.has(team.id)) {
+      void toggleTeam(team);
+    }
+  }, [expandedTeams, toggleTeam]);
+
+  const selectBinder = useCallback((binder: Binder) => {
+    setSelected({ kind: 'binder', binder });
+    setQuery('');
+    if (!expandedBinders.has(binder.id)) {
+      void toggleBinder(binder);
+    }
+  }, [expandedBinders, toggleBinder]);
+
+  const selectFolder = useCallback((folder: FolderNode, path: string[]) => {
+    setSelected({ kind: 'folder', folder, path });
+    setQuery('');
     if (!expandedFolders.has(folder.id)) {
       void toggleFolder(folder);
     }
@@ -371,19 +404,22 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
         );
         if (cancelled) return;
         setExpandedBinders((prev) => new Set(prev).add(binder.id));
+        setSelected({ kind: 'binder', binder });
 
         const path = reveal.folderPath ?? [];
         let siblings = binderContents.folders;
-        let selected: FolderNode | undefined;
+        let selectedFolder: FolderNode | undefined;
         let currentContents = binderContents;
         let openedTarget = path.length === 0 && !reveal.folderId;
+        const openedPath: string[] = [];
 
         for (const [index, segment] of path.entries()) {
           const segmentId = folderSegmentId(segment);
           if (!segmentId) break;
           const folder = siblings.find((item) => item.id === segmentId);
           if (!folder) break;
-          selected = folder;
+          selectedFolder = folder;
+          openedPath.push(folder.id);
           const isLast = index === path.length - 1;
           const childKey = `folder:${folder.id}`;
           const childContents = await loadContents(
@@ -427,10 +463,25 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
           );
           if (cancelled) return;
           setExpandedFolders((prev) => new Set(prev).add(leafId));
-          setActiveFolderId(leafId);
+          const leafFolder = selectedFolder && selectedFolder.id === leafId
+            ? selectedFolder
+            : {
+                id: leafId,
+                name: reveal.folderPath?.at(-1)?.name || 'Folder',
+                binderId: binder.id,
+                binderName: binder.name,
+                teamId: binder.teamId,
+                teamName: binder.teamName,
+                parentId: null,
+              };
+          setSelected({
+            kind: 'folder',
+            folder: leafFolder,
+            path: openedPath.length > 0 ? openedPath : [leafId],
+          });
           openedTarget = true;
-        } else if (selected) {
-          setActiveFolderId(selected.id);
+        } else if (selectedFolder) {
+          setSelected({ kind: 'folder', folder: selectedFolder, path: openedPath });
         }
 
         const match = currentContents.documents.find((doc) => {
@@ -500,191 +551,286 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
     }
   }
 
-  function renderContents(parentKey: string, depth: number, folderPath: string[]) {
+  function renderFolders(parentKey: string, depth: number, folderPath: string[]) {
     const contents = contentsByParent.get(parentKey);
     if (!contents) return null;
 
-    if (contents.folders.length === 0 && contents.documents.length === 0) {
+    return contents.folders.map((folder) => {
+      const childKey = `folder:${folder.id}`;
+      const isExpanded = expandedFolders.has(folder.id);
+      const isLoading = loadingSet.has(childKey);
+      const childContents = contentsByParent.get(childKey);
+      const hasChildren = !childContents || childContents.folders.length > 0;
+      const nextPath = [...folderPath, folder.id];
+      const isActive = selected?.kind === 'folder' && selected.folder.id === folder.id;
+      const count = documentCount(childContents);
+
       return (
-        <div className="tree-empty-inline" style={{ paddingLeft: `${depth * 20 + 16}px` }}>
-          Nothing has been sent here yet.
-        </div>
-      );
-    }
-
-    return (
-      <>
-        {contents.folders.map((folder) => {
-          const childKey = `folder:${folder.id}`;
-          const isExpanded = expandedFolders.has(folder.id);
-          const isLoading = loadingSet.has(childKey);
-          const childContents = contentsByParent.get(childKey);
-          const hasChildren = !childContents
-            || childContents.folders.length > 0
-            || childContents.documents.length > 0;
-          const nextPath = [...folderPath, folder.id];
-
-          return (
-            <div key={folder.id}>
-              <div
-                className={`tree-row tree-row-folder${activeFolderId === folder.id ? ' tree-row--active' : ''}`}
-                style={{ paddingLeft: `${depth * 20}px` }}
-                data-folder-id={folder.id}
-                onClick={() => selectFolder(folder)}
-              >
-                <Expander
-                  loading={isLoading}
-                  expandable={hasChildren}
-                  expanded={isExpanded}
-                  onClick={() => void toggleFolder(folder)}
-                />
-                <span className="tree-node-icon" aria-hidden="true">
-                  <FolderIcon />
-                </span>
-                <button
-                  type="button"
-                  className="tree-folder-name"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    selectFolder(folder);
-                  }}
-                >
-                  {folder.name}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-sm tree-send-here"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSendHere(sendTargetFor(folder, nextPath));
-                  }}
-                >
-                  Send documents here
-                </button>
-              </div>
-              {isExpanded && renderContents(childKey, depth + 1, nextPath)}
-            </div>
-          );
-        })}
-        {contents.documents.map((doc) => (
+        <div key={folder.id}>
           <div
-            key={doc.id}
-            data-document-id={doc.id}
-            className={`tree-row tree-row-doc${focusDocumentId === doc.id ? ' tree-row-doc--focus' : ''}`}
+            className={`tree-row tree-row-folder${isActive ? ' tree-row--active' : ''}`}
             style={{ paddingLeft: `${depth * 20}px` }}
+            data-folder-id={folder.id}
+            onClick={() => selectFolder(folder, nextPath)}
           >
-            <span className="tree-arrow-gap" aria-hidden="true" />
+            <Expander
+              loading={isLoading}
+              expandable={hasChildren}
+              expanded={isExpanded}
+              onClick={() => void toggleFolder(folder)}
+            />
             <span className="tree-node-icon" aria-hidden="true">
-              <FileIcon />
+              <FolderIcon />
             </span>
-            <div className="tree-doc-info">
-              <span className="tree-name">{doc.name}</span>
-              <span className="tree-doc-meta">
-                {formatFileSize(Number(doc.sizeBytes))} · {fileKind(doc.contentType)} · {formatDate(doc.createdAt)}
-              </span>
-            </div>
             <button
               type="button"
-              className="btn btn-sm item-download"
-              disabled={downloadingId === doc.id}
-              onClick={() => void downloadDocument(doc.id, doc.name)}
+              className="tree-folder-name"
+              onClick={(event) => {
+                event.stopPropagation();
+                selectFolder(folder, nextPath);
+              }}
             >
-              {downloadingId === doc.id ? 'Downloading...' : 'Download'}
+              {folder.name}
             </button>
+            {count > 0 && <span className="tree-count">{count}</span>}
           </div>
-        ))}
-      </>
-    );
+          {isExpanded && renderFolders(childKey, depth + 1, nextPath)}
+        </div>
+      );
+    });
   }
 
-  if (loadingTeams || revealing) {
-    return (
-      <div className="dest-tree documents-tree">
-        <PageLoading label={revealing ? 'Opening the document' : 'Loading documents'} />
-      </div>
-    );
-  }
+  const selectedContents = selected?.kind === 'binder'
+    ? contentsByParent.get(`binder:${selected.binder.id}`)
+    : selected?.kind === 'folder'
+      ? contentsByParent.get(`folder:${selected.folder.id}`)
+      : undefined;
+  const selectedLoading = selected?.kind === 'binder'
+    ? loadingSet.has(`binder:${selected.binder.id}`)
+    : selected?.kind === 'folder'
+      ? loadingSet.has(`folder:${selected.folder.id}`)
+      : false;
+  const documents = selectedContents?.documents ?? [];
+  const visibleDocuments = query.trim()
+    ? documents.filter((doc) => doc.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : documents;
 
-  if (teams.length === 0) {
-    return (
-      <div className="dest-tree documents-tree">
-        <p className="empty-state">You are not on a team yet, so there is nowhere to file documents.</p>
-      </div>
-    );
-  }
+  const opening = revealing || loadingTeams;
+  const openingLabel = revealing ? 'Opening the document' : 'Loading documents';
+
+  const tree = (
+    <div className="dest-tree dest-tree--rail documents-tree">
+      {opening ? (
+        <PageLoading label={openingLabel} />
+      ) : teams.length === 0 ? (
+        <p className="tree-empty">You are not on a team yet, so there is nowhere to file documents.</p>
+      ) : (
+        <div className="tree-scroll">
+          <ContentReveal>
+            {teams.map((team) => {
+              const isExpanded = expandedTeams.has(team.id);
+              const isLoading = loadingSet.has(`team:${team.id}`);
+              const binders = bindersByTeam.get(team.id);
+              const teamActive = selected?.kind === 'team' && selected.team.id === team.id;
+
+              return (
+                <div key={team.id} className="tree-team-group">
+                  <div className={`tree-row tree-row-team${teamActive ? ' tree-row--active' : ''}`}>
+                    <button
+                      type="button"
+                      className="tree-arrow"
+                      onClick={() => void toggleTeam(team)}
+                      aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {isLoading ? <span className="tree-spinner" /> : isExpanded ? '▾' : '▸'}
+                    </button>
+                    <span className="tree-node-icon" aria-hidden="true">
+                      <TeamIcon />
+                    </span>
+                    <button
+                      type="button"
+                      className="tree-team-name"
+                      onClick={() => selectTeam(team)}
+                    >
+                      {team.name}
+                    </button>
+                  </div>
+
+                  {isExpanded &&
+                    binders?.map((binder) => {
+                      const binderExpanded = expandedBinders.has(binder.id);
+                      const binderKey = `binder:${binder.id}`;
+                      const binderLoading = loadingSet.has(binderKey);
+                      const binderContents = contentsByParent.get(binderKey);
+                      const hasChildren = !binderContents || binderContents.folders.length > 0;
+                      const binderActive = selected?.kind === 'binder' && selected.binder.id === binder.id;
+                      const count = documentCount(binderContents);
+
+                      return (
+                        <div key={binder.id}>
+                          <div
+                            className={`tree-row tree-row-binder${binderActive ? ' tree-row--active' : ''}`}
+                            style={{ paddingLeft: '20px' }}
+                            onClick={() => selectBinder(binder)}
+                          >
+                            <Expander
+                              loading={binderLoading}
+                              expandable={hasChildren}
+                              expanded={binderExpanded}
+                              onClick={() => void toggleBinder(binder)}
+                            />
+                            <span className="tree-node-icon" aria-hidden="true">
+                              <BinderIcon />
+                            </span>
+                            <button
+                              type="button"
+                              className="tree-binder-name"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                selectBinder(binder);
+                              }}
+                            >
+                              {binder.name}
+                            </button>
+                            {count > 0 && <span className="tree-count">{count}</span>}
+                          </div>
+                          {binderExpanded && renderFolders(binderKey, 2, [])}
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </ContentReveal>
+        </div>
+      )}
+    </div>
+  );
+
+  const title = selected?.kind === 'folder'
+    ? selected.folder.name
+    : selected?.kind === 'binder'
+      ? selected.binder.name
+      : selected?.kind === 'team'
+        ? selected.team.name
+        : 'Documents';
+  const crumb = selected?.kind === 'folder'
+    ? `${selected.folder.teamName} · ${selected.folder.binderName}`
+    : selected?.kind === 'binder'
+      ? selected.binder.teamName
+      : null;
 
   return (
-    <div className="dest-tree documents-tree">
-      {downloadError && <div className="error-banner">{downloadError}</div>}
-      <div className="tree-scroll">
-      <ContentReveal>
-        {teams.map((team) => {
-          const isExpanded = expandedTeams.has(team.id);
-          const isLoading = loadingSet.has(`team:${team.id}`);
-          const binders = bindersByTeam.get(team.id);
-
-          return (
-            <div key={team.id} className="tree-team-group">
-              <div className="tree-row tree-row-team">
-                <button
-                  type="button"
-                  className="tree-arrow"
-                  onClick={() => void toggleTeam(team)}
-                  aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                >
-                  {isLoading ? <span className="tree-spinner" /> : isExpanded ? '▾' : '▸'}
-                </button>
-                <span className="tree-node-icon" aria-hidden="true">
-                  <TeamIcon />
-                </span>
-                <button
-                  type="button"
-                  className="tree-team-name"
-                  onClick={() => void toggleTeam(team)}
-                >
-                  {team.name}
-                </button>
+    <>
+      <SidebarTree pane="docs">{tree}</SidebarTree>
+      <div className="files-pane">
+        {opening ? (
+          <PageLoading label={openingLabel} />
+        ) : (
+          <>
+            <div className="files-pane-header">
+              <div className="files-pane-heading">
+                {crumb && <p className="files-pane-crumb">{crumb}</p>}
+                <h2 className="files-pane-title">{title}</h2>
+                {!selected && (
+                  <p className="files-pane-lead">
+                    Browse files by team, binder, and folder.
+                  </p>
+                )}
+                {(selected?.kind === 'folder' || selected?.kind === 'binder') && (
+                  <p className="files-pane-lead">
+                    Only authorized study staff can download.
+                  </p>
+                )}
               </div>
-
-              {isExpanded &&
-                binders?.map((binder) => {
-                  const binderExpanded = expandedBinders.has(binder.id);
-                  const binderKey = `binder:${binder.id}`;
-                  const binderLoading = loadingSet.has(binderKey);
-                  const binderContents = contentsByParent.get(binderKey);
-                  const hasChildren = !binderContents
-                    || binderContents.folders.length > 0
-                    || binderContents.documents.length > 0;
-
-                  return (
-                    <div key={binder.id}>
-                      <div className="tree-row tree-row-binder" style={{ paddingLeft: '20px' }}>
-                        <Expander
-                          loading={binderLoading}
-                          expandable={hasChildren}
-                          expanded={binderExpanded}
-                          onClick={() => void toggleBinder(binder)}
-                        />
-                        <span className="tree-node-icon" aria-hidden="true">
-                          <BinderIcon />
-                        </span>
-                        <button
-                          type="button"
-                          className="tree-binder-name"
-                          onClick={() => void toggleBinder(binder)}
-                        >
-                          {binder.name}
-                        </button>
-                      </div>
-                      {binderExpanded && renderContents(binderKey, 2, [])}
-                    </div>
-                  );
-                })}
+              <div className="files-pane-tools">
+                {(selected?.kind === 'binder' || selected?.kind === 'folder') && (
+                  <div className="files-search-wrap">
+                    <input
+                      ref={searchRef}
+                      className="files-search"
+                      type="search"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search"
+                      aria-label="Search"
+                    />
+                    {query && (
+                      <button
+                        type="button"
+                        className="files-search-clear"
+                        onClick={() => {
+                          setQuery('');
+                          searchRef.current?.focus();
+                        }}
+                        aria-label="Clear search"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                )}
+                {selected?.kind === 'folder' && (
+                  <button
+                    type="button"
+                    className="files-pane-send"
+                    onClick={() => onSendHere(sendTargetFor(selected.folder, selected.path))}
+                  >
+                    Send documents to this location
+                  </button>
+                )}
+              </div>
             </div>
-          );
-        })}
-      </ContentReveal>
+            {downloadError && <div className="error-banner">{downloadError}</div>}
+            <div className="files-pane-body">
+              {!selected || selected.kind === 'team' ? (
+                <p className="empty-state">Select a binder or folder to see its documents.</p>
+              ) : selectedLoading && !selectedContents ? (
+                <PageLoading label="Loading documents" />
+              ) : documents.length === 0 ? (
+                <ContentReveal>
+                  <p className="empty-state empty-state--compact">No documents have been sent here yet.</p>
+                </ContentReveal>
+              ) : visibleDocuments.length === 0 ? (
+                <ContentReveal>
+                  <p className="empty-state empty-state--compact">No documents match that search.</p>
+                </ContentReveal>
+              ) : (
+                <ContentReveal>
+                  <ul className="doc-list">
+                    {visibleDocuments.map((doc) => {
+                      const kind = fileKind(doc.contentType);
+                      return (
+                        <li
+                          key={doc.id}
+                          data-document-id={doc.id}
+                          className={`doc-row${focusDocumentId === doc.id ? ' doc-row--focus' : ''}`}
+                        >
+                          <span className={`doc-kind doc-kind--${kind.toLowerCase()}`}>{kind}</span>
+                          <div className="doc-info">
+                            <span className="doc-name">{doc.name}</span>
+                            <span className="doc-meta">
+                              {kind.toLowerCase()} · {formatFileSize(Number(doc.sizeBytes))} · {formatDate(doc.createdAt)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-sm item-download"
+                            disabled={downloadingId === doc.id}
+                            onClick={() => void downloadDocument(doc.id, doc.name)}
+                          >
+                            {downloadingId === doc.id ? 'Downloading...' : 'Download'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </ContentReveal>
+              )}
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </>
   );
 }

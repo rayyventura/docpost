@@ -1,62 +1,18 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { z } from 'zod';
 import { eq, and, sql, desc, inArray } from 'drizzle-orm';
 import { requireUserAuth } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { jobs, files, tasks } from '../db/schema.js';
 import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
-import { destinationPaths, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
+import { assertFolderDestinations, destinationPaths, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
 import { reconcileExhaustedTasks } from '../lib/reconcile.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
+import { createJobSchema, parsedDestinations, tooManyDestinationsMessage, totalSupportedDestinations } from '../lib/createJobSchema.js';
 
 const router = Router();
 
 const STAGING_DEADLINE_MINUTES = parseInt(process.env.STAGING_DEADLINE_MINUTES ?? '30', 10);
-
-const ALLOWED_CONTENT_TYPES = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/png',
-  'image/jpeg',
-] as const;
-
-// ---------- Zod schemas ----------
-
-const destinationSchema = z.object({
-  teamId: z.string().uuid(),
-  binderId: z.string().uuid(),
-  folderId: z.string().uuid(),
-});
-
-const fileSchema = z.object({
-  name: z.string().min(1).max(255),
-  sizeBytes: z.number().int().min(1).max(1_073_741_824),
-  contentType: z.enum(ALLOWED_CONTENT_TYPES),
-  sha256: z.string().min(1),
-});
-
-const mappingSchema = z.object({
-  fileIndex: z.number().int().min(0),
-  destinations: z.array(destinationSchema).min(1),
-});
-
-const createJobSchema = z.object({
-  files: z.array(fileSchema).min(1).max(100),
-  destinations: z.array(destinationSchema).min(1).max(200).optional(),
-  mappings: z.array(mappingSchema).min(1).optional(),
-}).superRefine((data, ctx) => {
-  if (data.mappings?.length) {
-    if (!data.mappings.every((mapping) => mapping.fileIndex < data.files.length)) {
-      ctx.addIssue({ code: 'custom', message: 'fileIndex out of range' });
-    }
-    return;
-  }
-  if (!data.destinations?.length) {
-    ctx.addIssue({ code: 'custom', message: 'Choose at least one destination' });
-  }
-});
 
 function destKey(destination: { teamId: string; binderId: string; folderId: string }): string {
   return `${destination.teamId}:${destination.binderId}:${destination.folderId}`;
@@ -96,11 +52,11 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
     const mappings = parsed.data.mappings?.length
       ? parsed.data.mappings.map((mapping) => ({
           ...mapping,
-          destinations: uniqueDestinations(mapping.destinations),
+          destinations: uniqueDestinations(parsedDestinations(mapping.destinations)),
         }))
       : fileInputs.map((_, fileIndex) => ({
           fileIndex,
-          destinations: uniqueDestinations(parsed.data.destinations ?? []),
+          destinations: uniqueDestinations(parsedDestinations(parsed.data.destinations ?? [])),
         }));
     const userId = req.user!.sub;
 
@@ -112,6 +68,15 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
       if (!allowedTeams.has(teamId)) {
         const name = await teamName(teamId);
         throw new ForbiddenError(`Not a member of team ${name}`);
+      }
+    }
+
+    await assertFolderDestinations(mappings.flatMap((mapping) => mapping.destinations));
+
+    const destinationLimit = totalSupportedDestinations();
+    for (const mapping of mappings) {
+      if (mapping.destinations.length > destinationLimit) {
+        throw new ValidationError(tooManyDestinationsMessage(destinationLimit));
       }
     }
 
