@@ -40,9 +40,12 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --layout-max-width: 112rem;
+  --header-height: 60px;
   --panel-min-height: 20rem;
-  --panel-max-height: 70rem;
-  --panel-height: clamp(var(--panel-min-height), calc(100vh - 15rem), var(--panel-max-height));
+  --layout-chrome: calc(var(--header-height) + 12rem);
+  --send-page-chrome: calc(var(--header-height) + 8.75rem);
+  --panel-max-height: min(70rem, calc(100dvh - var(--layout-chrome)));
+  --panel-height: clamp(var(--panel-min-height), calc(100dvh - var(--layout-chrome)), var(--panel-max-height));
 }
 
 html {
@@ -63,7 +66,10 @@ body {
 
 /* ===== App Layout ===== */
 .app-layout {
-  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -81,7 +87,7 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 0 2rem;
-  height: 60px;
+  height: var(--header-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -108,10 +114,14 @@ body {
 
 .app-main {
   flex: 1;
+  min-height: 0;
   max-width: var(--layout-max-width);
   width: 100%;
   margin: 0 auto;
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* ===== Buttons ===== */
@@ -491,6 +501,7 @@ body {
 .destinations-page {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
 }
 
@@ -510,9 +521,10 @@ body {
 }
 
 .destinations-content {
-  height: var(--panel-height);
+  flex: 1;
   min-height: var(--panel-min-height);
-  max-height: var(--panel-max-height);
+  height: auto;
+  max-height: none;
 }
 
 .destinations-content .dest-tree {
@@ -725,11 +737,23 @@ body {
 }
 
 /* ===== Page Tabs ===== */
+.distribute-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .page-tabs {
   display: flex;
   gap: 0.25rem;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 9;
   margin-bottom: 1.5rem;
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 .page-tab {
@@ -790,7 +814,11 @@ body {
 }
 
 .tab-panel--active {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @keyframes tabFadeIn {
@@ -806,7 +834,18 @@ body {
 
 /* ===== New Job Page ===== */
 .new-job-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
   padding-top: 0.25rem;
+}
+
+.new-job-page .page-lead,
+.new-job-page .error-banner {
+  flex-shrink: 0;
 }
 
 .new-job-page h2 {
@@ -834,7 +873,8 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 1rem;
-  padding: 1rem 0;
+  flex-shrink: 0;
+  padding: 0.75rem 0 0;
 }
 
 .job-actions .btn-primary {
@@ -1060,18 +1100,46 @@ body {
   gap: 1.5rem;
   margin-bottom: 1rem;
   height: var(--panel-height);
-  min-height: 22rem;
+  min-height: var(--panel-min-height);
   max-height: var(--panel-max-height);
   overflow: hidden;
 }
 
+.new-job-page .distribute-panels {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+}
+
 @media (max-width: 700px) {
+  .app-layout {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .app-main {
+    overflow: visible;
+  }
+
+  .new-job-page {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
   .distribute-panels {
     grid-template-columns: 1fr;
     grid-template-rows: none;
     height: auto;
     min-height: 0;
     overflow: visible;
+  }
+
+  .new-job-page .distribute-panels {
+    flex: none;
+    height: auto;
   }
 
   .panel-left,
@@ -1412,6 +1480,9 @@ body {
 
 /* ===== Selection Summary (chips) ===== */
 .selection-summary {
+  flex-shrink: 0;
+  max-height: 4.5rem;
+  overflow-y: auto;
   margin-bottom: 0.75rem;
 }
 
@@ -1553,19 +1624,35 @@ body {
 .job-dashboard {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   padding-top: 0.5rem;
 }
 
+.job-dashboard-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.job-dashboard-scroll > .page-loading,
 .job-dashboard > .page-loading {
   flex: 1;
   min-height: var(--panel-min-height);
-  height: var(--panel-height);
-  max-height: var(--panel-max-height);
+  height: 100%;
 }
 
 .job-dashboard--details {
   max-width: 100%;
   width: 100%;
+}
+
+.job-dashboard .page-lead,
+.job-dashboard .dashboard-header,
+.job-dashboard .job-summary,
+.job-dashboard .task-filters {
+  flex-shrink: 0;
 }
 
 .dashboard-header {
@@ -1910,8 +1997,12 @@ body {
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: 0.75rem 1rem;
-  padding: 1rem 0;
+  margin-top: 0.5rem;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
   font-size: 0.8125rem;
 }
 

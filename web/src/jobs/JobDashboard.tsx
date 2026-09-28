@@ -8,7 +8,7 @@ import type { DeliveryLocationState, FilesLocationState, JobSummary, TaskDetail 
 import { formatFailureReason } from './failureMessages';
 import { formatDate } from '../formatDate';
 import { uploadForTask, useJobUploads, type JobUploadFile } from './jobUploads';
-import { applyJobCounts, applyTaskUpdate, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
+import { applyJobCounts, applyTaskUpdate, countSegmentAction, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import { deliverySocketUrl } from './wsUrl';
 
 function deliverySeed(state: unknown, jobId: string | undefined): {
@@ -193,6 +193,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const uploads = useJobUploads(selectedJobId);
   const pendingScrollStatus = useRef<string | null>(null);
+  const loadRequestId = useRef(0);
   const focusTimer = useRef(0);
 
   // Load job list
@@ -221,6 +222,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
 
   const loadDetails = useCallback(async (showLoading: boolean): Promise<JobSummary | null> => {
     if (!selectedJobId) return null;
+    const requestId = ++loadRequestId.current;
     if (showLoading) setLoading(true);
     try {
       const filterParam = statusFilter ? `&status=${statusFilter}` : '';
@@ -230,18 +232,30 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           `/jobs/${selectedJobId}/tasks?page=${taskPage}&limit=100${filterParam}`,
         ),
       ]);
+      if (requestId !== loadRequestId.current) return null;
       if (job.jobId !== selectedJobId) return null;
       setSelectedJob(job);
       const nextTasks = mergeFetchedTasks(tasksRef.current, taskData.tasks);
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
       setTaskTotal(taskData.total);
+      const pending = pendingScrollStatus.current;
+      if (pending && taskPage === 1) {
+        const displayed = nextTasks.map((task) => displayTask(task));
+        const taskId = firstTaskIdForStatus(displayed, pending);
+        if (taskId) {
+          pendingScrollStatus.current = null;
+          window.clearTimeout(focusTimer.current);
+          setFocusTaskId(taskId);
+          focusTimer.current = window.setTimeout(() => setFocusTaskId(null), 1600);
+        }
+      }
       return job;
     } catch (err) {
       console.error(err);
       return null;
     } finally {
-      if (showLoading) setLoading(false);
+      if (showLoading && requestId === loadRequestId.current) setLoading(false);
     }
   }, [selectedJobId, taskPage, statusFilter]);
 
@@ -375,30 +389,34 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
     if (!taskId) return;
     window.clearTimeout(focusTimer.current);
     setFocusTaskId(taskId);
-    window.requestAnimationFrame(() => {
-      document.getElementById(`task-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
     focusTimer.current = window.setTimeout(() => setFocusTaskId(null), 1600);
   }, []);
 
   useEffect(() => () => window.clearTimeout(focusTimer.current), []);
 
   useEffect(() => {
-    const status = pendingScrollStatus.current;
-    if (!status || loading) return;
-    pendingScrollStatus.current = null;
-    revealStatus(status, visibleTasks);
-  }, [loading, statusFilter, tasks, visibleTasks, revealStatus]);
+    if (!focusTaskId) return;
+    const node = document.getElementById(`task-${focusTaskId}`);
+    if (!node) return;
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusTaskId, tasks]);
 
   const handleCountSegment = (status: string, count: number) => {
-    if (count <= 0) return;
-    if (statusFilter && statusFilter !== status) {
-      pendingScrollStatus.current = status;
-      setStatusFilter('');
-      setTaskPage(1);
+    const action = countSegmentAction({
+      status,
+      count,
+      statusFilter,
+      taskPage,
+      matchOnPage: Boolean(firstTaskIdForStatus(visibleTasks, status)),
+    });
+    if (action === 'noop') return;
+    if (action === 'reveal') {
+      revealStatus(status, visibleTasks);
       return;
     }
-    revealStatus(status, visibleTasks);
+    pendingScrollStatus.current = status;
+    setStatusFilter(status);
+    setTaskPage(1);
   };
 
   if (!selectedJobId) {
@@ -413,6 +431,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           </Link>
           .
         </p>
+        <div className="job-dashboard-scroll">
         {listLoading ? (
           <PageLoading label="Loading deliveries" />
         ) : jobs.length === 0 ? (
@@ -441,6 +460,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           </ul>
           </ContentReveal>
         )}
+        </div>
       </div>
     );
   }
@@ -507,8 +527,11 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
       </div>
 
       {loading && visibleTasks.length === 0 ? (
-        <PageLoading label="Loading delivery details" />
+        <div className="job-dashboard-scroll">
+          <PageLoading label="Loading delivery details" />
+        </div>
       ) : (
+        <div className="job-dashboard-scroll">
         <ContentReveal>
         <table className="task-table">
           <colgroup>
@@ -578,6 +601,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
           </tbody>
         </table>
         </ContentReveal>
+        </div>
       )}
 
       <Pagination

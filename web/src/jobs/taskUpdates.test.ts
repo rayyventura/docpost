@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyJobCounts, applyTaskUpdate, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
+import { applyJobCounts, applyTaskUpdate, countSegmentAction, firstTaskIdForStatus, mergeFetchedTasks } from './taskUpdates';
 import type { TaskDetail } from './types';
 
 function task(overrides: Partial<TaskDetail>): TaskDetail {
@@ -81,6 +81,44 @@ describe('firstTaskIdForStatus', () => {
       task({ taskId: 'c', status: 'failed' }),
     ];
     expect(firstTaskIdForStatus(rows, 'failed')).toBe('b');
+  });
+});
+
+describe('countSegmentAction', () => {
+  it('filters when the matching item is not on the first page', () => {
+    expect(
+      countSegmentAction({
+        status: 'failed',
+        count: 3,
+        statusFilter: '',
+        taskPage: 1,
+        matchOnPage: false,
+      }),
+    ).toBe('filter');
+  });
+
+  it('filters when the user is already past page 1', () => {
+    expect(
+      countSegmentAction({
+        status: 'failed',
+        count: 3,
+        statusFilter: 'failed',
+        taskPage: 2,
+        matchOnPage: true,
+      }),
+    ).toBe('filter');
+  });
+
+  it('reveals when the first matching item is already on page 1', () => {
+    expect(
+      countSegmentAction({
+        status: 'failed',
+        count: 3,
+        statusFilter: '',
+        taskPage: 1,
+        matchOnPage: true,
+      }),
+    ).toBe('reveal');
   });
 });
 
