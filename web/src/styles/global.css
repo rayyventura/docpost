@@ -1174,7 +1174,14 @@ body {
 }
 
 .tree-row:hover {
-  background: var(--color-primary-subtle);
+  background: #e8f2f6;
+}
+
+.tree-row.tree-row-folder,
+.tree-row.tree-row-folder .tree-folder-name,
+.tree-row.tree-row-folder .tree-node-icon,
+.tree-row.tree-row-folder .tree-arrow-gap {
+  cursor: pointer;
 }
 
 .tree-row-team {

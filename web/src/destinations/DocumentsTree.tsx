@@ -112,7 +112,10 @@ function Expander({
     <button
       type="button"
       className="tree-arrow"
-      onClick={onClick}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
       aria-label={expanded ? 'Collapse' : 'Expand'}
     >
       {loading ? <span className="tree-spinner" /> : expanded ? '▾' : '▸'}
@@ -148,6 +151,7 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [focusDocumentId, setFocusDocumentId] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(Boolean(reveal?.teamId && reveal.binderId));
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState('');
 
@@ -300,7 +304,15 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   }, [expandedFolders, toggleFolder]);
 
   useEffect(() => {
-    if (loadingTeams || !reveal?.teamId || !reveal.binderId) return;
+    if (!reveal?.teamId || !reveal.binderId) {
+      setRevealing(false);
+      return;
+    }
+
+    setRevealing(true);
+    setFocusDocumentId(null);
+
+    if (loadingTeams) return;
 
     let cancelled = false;
 
@@ -381,11 +393,13 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
 
         if (match) {
           setFocusDocumentId(match.id);
-        } else if (selected) {
+        } else {
           setFocusDocumentId(null);
         }
       } catch (err) {
         console.error(err);
+      } finally {
+        if (!cancelled) setRevealing(false);
       }
     };
 
@@ -456,6 +470,7 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
                 className={`tree-row tree-row-folder${activeFolderId === folder.id ? ' tree-row--active' : ''}`}
                 style={{ paddingLeft: `${depth * 20}px` }}
                 data-folder-id={folder.id}
+                onClick={() => selectFolder(folder)}
               >
                 <Expander
                   loading={isLoading}
@@ -469,14 +484,20 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
                 <button
                   type="button"
                   className="tree-folder-name"
-                  onClick={() => selectFolder(folder)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    selectFolder(folder);
+                  }}
                 >
                   {folder.name}
                 </button>
                 <button
                   type="button"
                   className="btn btn-sm tree-send-here"
-                  onClick={() => onSendHere(sendTargetFor(folder, nextPath))}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSendHere(sendTargetFor(folder, nextPath));
+                  }}
                 >
                   Send documents here
                 </button>
@@ -516,10 +537,10 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
     );
   }
 
-  if (loadingTeams) {
+  if (loadingTeams || revealing) {
     return (
       <div className="dest-tree documents-tree">
-        <PageLoading label="Loading documents" />
+        <PageLoading label={revealing ? 'Opening the document' : 'Loading documents'} />
       </div>
     );
   }
