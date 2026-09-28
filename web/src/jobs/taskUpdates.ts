@@ -20,7 +20,10 @@ function isPlaceholderId(taskId: string): boolean {
   return taskId.startsWith('pending-');
 }
 
-function sameFile(task: TaskDetail, message: TaskUpdateMessage): boolean {
+function sameFile(
+  task: TaskDetail,
+  message: { fileId?: string | null; fileName?: string | null },
+): boolean {
   if (message.fileId && task.fileId && task.fileId === message.fileId) return true;
   if (message.fileName && task.fileName && task.fileName === message.fileName) return true;
   return false;
