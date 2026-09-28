@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { apiRequest } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { SidebarTree } from '../layout/SidebarTree';
-import { FilePicker, fileContentType } from './FilePicker';
+import { FilePicker } from './FilePicker';
+import { applyFileUpdate, fileContentType } from './fileSelection';
 import { DestinationTree } from './DestinationTree';
 import { startJobUploads } from './jobUploads';
 import type { SelectedFile, Destination, JobSubmitResponse, SendLocationState } from './types';
@@ -51,12 +52,16 @@ export function NewJobPage() {
   }, [location.key, location.state, destinationLimit]);
 
   const handleFilesAdded = useCallback((newFiles: SelectedFile[]) => {
-    if (newFiles.length > 0) {
-      setFiles((prev) => [...prev, ...newFiles]);
-    } else {
-      setFiles((prev) => [...prev]);
-    }
+    if (newFiles.length === 0) return;
+    setFiles((prev) => [...prev, ...newFiles]);
   }, []);
+
+  const handleFileUpdated = useCallback(
+    (id: string, patch: Partial<Omit<SelectedFile, 'id' | 'file'>>) => {
+      setFiles((prev) => applyFileUpdate(prev, id, patch));
+    },
+    [],
+  );
 
   const handleFileRemoved = useCallback((id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
@@ -203,6 +208,7 @@ export function NewJobPage() {
           <FilePicker
             files={files}
             onFilesAdded={handleFilesAdded}
+            onFileUpdated={handleFileUpdated}
             onFileRemoved={handleFileRemoved}
             onErrorChange={setFileError}
             disabled={submitting}
