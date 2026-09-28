@@ -35,6 +35,9 @@ services/platform/uploads/
 
 # Claude Code local files
 .claude/
+# Claude Code local files
+.cursor/
+
 
 # Local RDS master password for Terraform
 infra/envs/dev/.rds-password

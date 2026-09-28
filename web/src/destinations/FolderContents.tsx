@@ -26,6 +26,7 @@ interface FolderContentsProps {
   id: string;
   type: 'binder' | 'folder';
   onSelectFolder: (folderId: string, folderName: string) => void;
+  onSendHere?: () => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -55,7 +56,7 @@ function contentTypeIcon(contentType: string): string {
   return '\uD83D\uDCC4';
 }
 
-export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps) {
+export function FolderContents({ id, type, onSelectFolder, onSendHere }: FolderContentsProps) {
   const [contents, setContents] = useState<ContentsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -121,7 +122,18 @@ export function FolderContents({ id, type, onSelectFolder }: FolderContentsProps
   if (isEmpty) {
     return (
       <ContentReveal>
-        <p className="empty-state">No documents have been sent here yet.</p>
+        <div className="empty-state">
+          <p>No documents have been sent here yet.</p>
+          {type === 'folder' && onSendHere && (
+            <button
+              type="button"
+              className="files-pane-send"
+              onClick={onSendHere}
+            >
+              Send documents to this location
+            </button>
+          )}
+        </div>
       </ContentReveal>
     );
   }

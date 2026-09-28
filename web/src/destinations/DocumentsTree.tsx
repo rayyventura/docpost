@@ -770,7 +770,7 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
                     )}
                   </div>
                 )}
-                {selected?.kind === 'folder' && (
+                {selected?.kind === 'folder' && !selectedLoading && documents.length > 0 && (
                   <button
                     type="button"
                     className="files-pane-send"
@@ -789,7 +789,18 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
                 <PageLoading label="Loading documents" />
               ) : documents.length === 0 ? (
                 <ContentReveal>
-                  <p className="empty-state empty-state--compact">No documents have been sent here yet.</p>
+                  <div className="empty-state empty-state--compact">
+                    <p>No documents have been sent here yet.</p>
+                    {selected.kind === 'folder' && (
+                      <button
+                        type="button"
+                        className="files-pane-send"
+                        onClick={() => onSendHere(sendTargetFor(selected.folder, selected.path))}
+                      >
+                        Send documents to this location
+                      </button>
+                    )}
+                  </div>
                 </ContentReveal>
               ) : visibleDocuments.length === 0 ? (
                 <ContentReveal>
