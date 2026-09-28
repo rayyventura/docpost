@@ -8,6 +8,17 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').unique().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const passwordResetTokens = pgTable('password_reset_tokens', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id')
@@ -29,6 +40,8 @@ export const serviceClients = pgTable('service_clients', {
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type RefreshToken = typeof refreshTokens.$inferSelect;
+export type NewRefreshToken = typeof refreshTokens.$inferInsert;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 export type NewPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 export type ServiceClient = typeof serviceClients.$inferSelect;

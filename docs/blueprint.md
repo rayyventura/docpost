@@ -582,29 +582,58 @@ All three services and lambda workers read and write to their own PostgreSQL log
 
 **Refined By:** Rayane Ventura
 
-# **ADR-018**: Browser session persistence 
+# **ADR-018**: Browser session persistence
 
 # **Context:**
 
-* SPA is hosted in ClaudFront and the gateway in another domain, so HTTP-Onçy cookie policy is not compliant and buying a domain for this is out of scope for v1.
+* DocPost is a SPA hosted on a CloudFront domain, while the API is exposed through an API Gateway `execute-api.amazonaws.com` domain.  
+* Because the frontend and API are hosted on different sites, using an `HttpOnly` cookie for browser session persistence would require additional cross-site cookie configuration and a custom API domain. A custom domain is out of scope for v1.  
+* DocPost needs to maintain an authenticated browser session across page refreshes while keeping access tokens short-lived.
 
-**How to persist session when user refreshes the page ?**
+**How to persist the session across page refresh without a first-party HttpOnly cookie?**
 
-Switching to **httpOnly** cookies would require me to purchase a domain.  My SPA is on a CloudFront domain and the API is on a separate `execute-api.amazonaws.com` domain. **That's a cross-site relationship from the browser's perspective,** and cookies don't cross site boundaries the way you'd want by default. Here's what you'd need to work through.
+| Options Considered |  |  |  |
+| ----- | ----- | ----- | ----- |
+| **Option** | **Advantages** | **Disadvantages** | **Recommended Use Case** |
+| **HttpOnly cookies** | Client-side JavaScript cannot read the cookie, so this is stronger protection against JavaScript-based token theft | For v1 this needs a custom API domain, DNS, ACM certificates, API Gateway custom-domain config, credentialed CORS, and CSRF protections. That is outside v1 scope | After a custom domain makes the API first-party relative to the SPA |
+| **Non-HttpOnly cookies** | Would persist across tabs without `localStorage` | Inherits SameSite, domain scoping, CORS, and cross-site cookie concerns without the XSS protection of an `HttpOnly` cookie | Not recommended |
+| **Access token only** | Simplest authentication architecture | The user must authenticate again every 15 minutes | Not selected: the session experience is worse than the complexity it avoids |
+| **Short-lived access token plus refresh token** *(Selected)* | Users stay authenticated without re-entering credentials every 15 minutes; access tokens stay short-lived; rotation limits replay; server-side revocation can terminate a session; no tokens in `localStorage`; later migration to `HttpOnly` cookies remains possible | Refresh-token lifecycle adds backend complexity; the auth service must track refresh-token state; the access token remains readable by JavaScript, so XSS could access an active access token; cross-site auth still needs careful CORS | v1, where the API and SPA are on different sites and a custom domain is out of scope |
 
-**1\. Custom domain for the API** 
+# **Decision:** Short-lived access token and a refresh token
 
-To make the cookie a genuine first-party cookie, the API needs to live on a subdomain of the same registrable domain as your SPA, e.g. `app.yourdomain.com` for the frontend and `api.yourdomain.com` for the API. That means:
+* The **access token** is valid for 15 minutes and is stored in `sessionStorage`.  
+* The **refresh token** is used to obtain a new access token when the current access token expires. It is not used to authenticate normal API requests.  
+* The refresh token has a longer lifetime and is subject to expiration and revocation.  
+* No authentication token is stored in `localStorage`.
 
-* An ACM certificate for the API custom domain  
-* An API Gateway custom domain mapping to your HTTP API  
-* DNS (Route 53 or wherever) pointing `api.yourdomain.com` to that mapping  
-* Possibly routing both through the same CloudFront distribution with path-based behaviors (`/api/*` → API Gateway origin) so everything is under one domain, which sidesteps some of the cross-domain issues entirely
+**Token lifecycle:**
 
-**Decision:** store the 15-minute access token in `sessionStorage`, issue no refresh token.
+1. **Authentication.** The user authenticates with DocPost. The authentication service issues an access token and a refresh token.  
+2. **Access token usage.** The SPA stores the 15-minute access token in `sessionStorage` and attaches it to authenticated API requests. The API validates the access token on each request.  
+3. **Access token expiration.** When the access token expires, the SPA does not require the user to authenticate again immediately. It sends the refresh token to the authentication endpoint to request a new access token.  
+4. **Refresh.** The authentication service validates the refresh token. If valid, a new 15-minute access token is issued. The SPA replaces the expired access token in `sessionStorage`.  
+5. **Refresh token rotation.** Each successful refresh invalidates the previous refresh token and issues a new refresh token. That limits the useful lifetime of a previously issued refresh token and provides protection against replay.  
+6. **Refresh token expiration or revocation.** If the refresh token has expired, has been revoked, or is otherwise invalid, the refresh request fails. The SPA clears the stored access token and returns the user to the authentication flow.  
+7. **Logout.** On logout, the SPA clears the access token from `sessionStorage`. The refresh token is revoked server-side so that it cannot be used to establish another session.
 
-* Moving to httpOnly cookies is the architecturally correct long-term answer, but it requires a custom domain (to make the API first-party relative to the SPA), plus new CORS credential handling and CSRF protection. That's a meaningfully larger lift than what M3 calls for, and the underlying blocker (no custom domain in v1) hasn't changed.  
-* A non-httpOnly cookie was considered and rejected: it inherits all the cookie-related complexity (SameSite, domain scoping, CORS) without gaining any XSS protection over
+**Refresh token storage:** because DocPost does not currently have a custom domain that allows the API to establish a first-party `HttpOnly` cookie, the refresh token is not stored in `localStorage`. It is kept in browser-controlled session state (`sessionStorage`) and limited through expiration, rotation, and server-side revocation.
+
+**Security controls:** because the access token is accessible to JavaScript, DocPost cannot rely on `HttpOnly` cookie protection in v1. Defense-in-depth controls include:
+
+* Short-lived 15-minute access tokens  
+* Refresh-token rotation  
+* Refresh-token expiration  
+* Server-side refresh-token revocation  
+* HTTPS for all application and API communication  
+* A restrictive Content Security Policy (CSP), treated as a defense-in-depth control against XSS rather than a guarantee that XSS cannot occur  
+* Input validation and output encoding where appropriate  
+* No authentication tokens in application logs or error messages  
+* No token persistence in `localStorage`
+
+**Future consideration:** when DocPost introduces a custom domain, the authentication architecture can be revisited. The refresh token could then be stored in a Secure, HttpOnly, appropriately scoped cookie, while the access token remains short-lived. CSRF protections would be required for state-changing operations.
+
+**Status:** Accepted
 
 **Refined By:** Rayane Ventura
 
@@ -907,7 +936,7 @@ Implementation note for **`GET /jobs`**: the paginated job list computes counts 
 
 All JSON. All routes require a JWT **except**
 
- `POST /auth/register`,  `POST /auth/login`,  `POST /auth/token`,  `GET /.well-known/jwks.json`, and `GET /.well-known/openid-configuration` [(ADR-001)](). 
+ `POST /auth/register`,  `POST /auth/login`,  `POST /auth/refresh`,  `POST /auth/logout`,  `POST /auth/token`,  `GET /.well-known/jwks.json`, and `GET /.well-known/openid-configuration` [(ADR-001)](). 
 
 **Global Error Shape:** `{ "error": { "code": "string", "message": "string" } }`.
 
@@ -916,13 +945,15 @@ All JSON. All routes require a JWT **except**
 | Method \+ path | Request | Response |
 | ----- | ----- | ----- |
 | `POST /auth/register` | `{email, password, name}` | `201 {id, email, name}` |
-| `POST /auth/login` | `{email, password}` | `200 {accessToken, expiresIn: 900}` (15-min user JWT) |
+| `POST /auth/login` | `{email, password}` | `200 {accessToken, refreshToken, expiresIn: 900, refreshExpiresIn: 604800}` (15-min user JWT plus rotating refresh token, [ADR-018]()) |
+| `POST /auth/refresh` | `{refreshToken}` | `200 {accessToken, refreshToken, expiresIn: 900, refreshExpiresIn: 604800}` on rotation; `401` if expired, revoked, or otherwise invalid ([ADR-018]()) |
+| `POST /auth/logout` | `{refreshToken}` | `200` and the presented refresh token is revoked server-side ([ADR-018]()) |
 | `POST /auth/token` | `{clientId, clientSecret, scope}` | `200 {accessToken, expiresIn: 900}` (service JWT, [ADR-013]()) |
 | `GET /.well-known/jwks.json` | – | `200` JWKS (public keys, both services validate against this) |
 
 User JWT claims: `sub` (user id), `email`, `exp`, `iat`. Service JWT claims: `sub` (client id), `scope`, `token_use: 'service'`.
 
-**Refresh tokens:** deferred to v2, documented here so the path is known. v1 ships the single 15-minute access token; on expiry the SPA sends the user back to login. The v2 upgrade is one **`refresh_tokens`** table (`token_hash`, `user_id`, `expires_at`, `revoked` boolean), one `POST /auth/refresh` endpoint, and a client-side interceptor that catches a 401, refreshes once, and retries. When the refresh cookie lands, the access token moves back to memory rather than to `localStorage`, since the cookie re-mints it on boot. This is purely additive: the JWT authorizer at the edge and every service's auth middleware validate access tokens only and are untouched, so deferring costs no rework. Roughly 1 day when built. Token rotation and reuse detection are excluded from both v1 and this v2 note.
+**Refresh tokens ([ADR-018]()):** v1 issues a 15-minute access token and a 7-day refresh token at login. The SPA stores both in `sessionStorage` (never `localStorage`) and attaches only the access token to authenticated API requests. A client interceptor that catches a 401 refreshes once via `POST /auth/refresh` and retries; a failed refresh clears the session and returns the user to login. Each successful refresh rotates the refresh token (previous token revoked, new token issued). Logout revokes the refresh token server-side. The JWT authorizer at the edge and every service's auth middleware still validate access tokens only. Service client-credentials tokens are unchanged and do not receive refresh tokens.
 
 ### **Document platform**
 
@@ -1014,7 +1045,7 @@ Push message shape: **`{type: 'task_update', jobId, taskId, status, failureReaso
 
 **Step 1.5: DocPost API skeleton \+ browsing proxy, deployed (1 day)** Service, `docpost` logical DB, migrations. `/destinations/*` proxy the platform with the user's JWT forwarded (membership enforcement lives in the platform; DocPost API adds the DocPost-enabled filter). 5 s timeout, platform errors mapped to 502\.
 
-**Step 1.6: Frontend chunk 1, browse destinations UI (1.5 days)** React \+ Vite SPA on the S3 \+ CloudFront hosting from Milestone 1\. Register/login screens, token in `sessionStorage`, so an in-tab refresh keeps the session. Lazy destination tree: teams → binders → one folder level per expand, matching the platform's one-level API so the \<500 ms target is per-level. Multi-select deferred to chunk 2 where mapping needs it.
+**Step 1.6: Frontend chunk 1, browse destinations UI (1.5 days)** React \+ Vite SPA on the S3 \+ CloudFront hosting from Milestone 1\. Register/login screens, 15-minute access token and refresh token in `sessionStorage` ([ADR-018]()), so an in-tab refresh keeps the session and access-token expiry refreshes without sending the user back to login. Lazy destination tree: teams → binders → one folder level per expand, matching the platform's one-level API so the \<500 ms target is per-level. Multi-select deferred to chunk 2 where mapping needs it.
 
 ### **Milestone 3: Flow 2, Distribute a batch (10 days)**
 

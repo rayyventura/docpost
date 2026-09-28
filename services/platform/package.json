@@ -18,18 +18,17 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "latest",
+    "@aws-sdk/s3-request-presigner": "latest",
     "@docpost/shared": "*",
     "dotenv": "latest",
     "drizzle-orm": "latest",
     "express": "latest",
     "jose": "latest",
-    "multer": "latest",
     "pg": "latest",
     "zod": "latest"
   },
   "devDependencies": {
     "@types/express": "latest",
-    "@types/multer": "latest",
     "@types/pg": "latest",
     "drizzle-kit": "latest",
     "tsx": "latest",

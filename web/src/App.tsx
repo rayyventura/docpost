@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
+import { PageLoading } from './PageLoading';
 import { LoginPage } from './auth/LoginPage';
 import { RegisterPage } from './auth/RegisterPage';
 import { ForgotPasswordPage } from './auth/ForgotPasswordPage';
@@ -11,8 +12,11 @@ import { Layout } from './layout/Layout';
 import type { ReactNode } from 'react';
 
 function ProtectedLayout() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, ready } = useAuth();
   const location = useLocation();
+  if (!ready) {
+    return <PageLoading label="Loading session" />;
+  }
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
@@ -24,8 +28,11 @@ function ProtectedLayout() {
 }
 
 function PublicRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, ready } = useAuth();
   const location = useLocation();
+  if (!ready) {
+    return <PageLoading label="Loading session" />;
+  }
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname;
   if (isAuthenticated) {
     return <Navigate to={from && from !== '/login' ? from : '/'} replace />;

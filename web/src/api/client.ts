@@ -1,25 +1,70 @@
+import {
+  clearSessionTokens,
+  getAccessToken,
+  getRefreshToken,
+  setSessionTokens,
+} from './session';
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
 let onUnauthorized: (() => void) | null = null;
+let refreshInFlight: Promise<boolean> | null = null;
 
 export function setOnUnauthorized(callback: () => void): void {
   onUnauthorized = callback;
 }
 
-function getToken(): string | null {
-  return sessionStorage.getItem('accessToken');
+interface RefreshResponse {
+  accessToken?: string;
+  refreshToken?: string;
 }
 
-export function setToken(token: string): void {
-  sessionStorage.setItem('accessToken', token);
+async function refreshSessionOnce(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) {
+      clearSessionTokens();
+      return false;
+    }
+
+    const data = (await response.json()) as RefreshResponse;
+    if (!data.accessToken || !data.refreshToken) {
+      clearSessionTokens();
+      return false;
+    }
+
+    setSessionTokens(data.accessToken, data.refreshToken);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function clearToken(): void {
-  sessionStorage.removeItem('accessToken');
+export function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshSessionOnce().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
+  return apiRequestInner(path, options, false);
+}
+
+async function apiRequestInner<T>(path: string, options: RequestInit, retried: boolean): Promise<T> {
+  const token = getAccessToken();
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   };
@@ -38,7 +83,13 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   });
 
   if (response.status === 401 && !path.startsWith('/auth/')) {
-    clearToken();
+    if (!retried) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        return apiRequestInner(path, options, true);
+      }
+    }
+    clearSessionTokens();
     onUnauthorized?.();
     throw new Error('Unauthorized');
   }
@@ -52,27 +103,18 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
 }
 
 export async function apiDownload(path: string, filename: string): Promise<void> {
-  const token = getToken();
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-
-  if (response.status === 401 && !path.startsWith('/auth/')) {
-    clearToken();
-    onUnauthorized?.();
-    throw new Error('Unauthorized');
+  const { url } = await apiRequest<{ url: string }>(path);
+  if (!url) {
+    throw new Error('Download failed');
   }
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'Download failed' } }));
-    throw new Error(error.error?.message || 'Download failed');
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
+  link.rel = 'noopener';
   link.download = filename;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
 }
+
+export { getAccessToken, getRefreshToken, setSessionTokens, clearSessionTokens };

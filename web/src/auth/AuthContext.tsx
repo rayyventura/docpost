@@ -1,5 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { apiRequest, setToken, clearToken, setOnUnauthorized } from '../api/client';
+import {
+  apiRequest,
+  clearSessionTokens,
+  getAccessToken,
+  getRefreshToken,
+  refreshSession,
+  setOnUnauthorized,
+  setSessionTokens,
+} from '../api/client';
 
 interface User {
   id: string;
@@ -10,6 +18,7 @@ interface User {
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+  ready: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
@@ -44,9 +53,11 @@ function getUserFromToken(token: string): User | null {
   }
 }
 
-interface LoginResponse {
+interface SessionResponse {
   accessToken: string;
+  refreshToken: string;
   expiresIn: number;
+  refreshExpiresIn: number;
 }
 
 interface RegisterResponse {
@@ -55,32 +66,68 @@ interface RegisterResponse {
   name: string;
 }
 
+function applySession(data: SessionResponse): User {
+  setSessionTokens(data.accessToken, data.refreshToken);
+  const user = getUserFromToken(data.accessToken);
+  if (!user) {
+    clearSessionTokens();
+    throw new Error('Invalid token received');
+  }
+  return user;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const token = sessionStorage.getItem('accessToken');
-    if (token) {
-      const u = getUserFromToken(token);
-      if (u) {
-        setUser(u);
-      } else {
-        clearToken();
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        const accessToken = getAccessToken();
+        const fromAccess = accessToken ? getUserFromToken(accessToken) : null;
+        if (fromAccess) {
+          if (!cancelled) {
+            setUser(fromAccess);
+          }
+          return;
+        }
+
+        if (!getRefreshToken()) {
+          clearSessionTokens();
+          return;
+        }
+
+        const refreshed = await refreshSession();
+        if (!refreshed) {
+          return;
+        }
+
+        const nextAccess = getAccessToken();
+        const nextUser = nextAccess ? getUserFromToken(nextAccess) : null;
+        if (nextUser && !cancelled) {
+          setUser(nextUser);
+        }
+      } finally {
+        if (!cancelled) {
+          setReady(true);
+        }
       }
     }
+
+    void restoreSession();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const data = await apiRequest<LoginResponse>('/auth/login', {
+    const data = await apiRequest<SessionResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    setToken(data.accessToken);
-    const u = getUserFromToken(data.accessToken);
-    if (!u) {
-      throw new Error('Invalid token received');
-    }
-    setUser(u);
+    setUser(applySession(data));
   }, []);
 
   const register = useCallback(async (email: string, password: string, name: string) => {
@@ -88,13 +135,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       body: JSON.stringify({ email, password, name }),
     });
-    // Auto-login after registration
     await login(email, password);
   }, [login]);
 
   const logout = useCallback(() => {
-    clearToken();
+    const refreshToken = getRefreshToken();
+    clearSessionTokens();
     setUser(null);
+    if (!refreshToken) {
+      return;
+    }
+    void apiRequest('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    }).catch(() => {
+      // Local session is already cleared.
+    });
   }, []);
 
   useEffect(() => {
@@ -103,30 +159,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout]);
 
   useEffect(() => {
-    const token = sessionStorage.getItem('accessToken');
-    if (!token) return;
+    if (!user) {
+      return;
+    }
+
+    const token = getAccessToken();
+    if (!token) {
+      return;
+    }
 
     try {
       const payload = decodeJwtPayload(token);
       const exp = payload.exp as number | undefined;
-      if (!exp) return;
-
-      const msUntilExpiry = exp * 1000 - Date.now();
-      if (msUntilExpiry <= 0) {
-        logout();
+      if (!exp) {
         return;
       }
 
-      const timer = setTimeout(logout, msUntilExpiry);
-      return () => clearTimeout(timer);
+      const msUntilExpiry = exp * 1000 - Date.now();
+      const wait = Math.max(msUntilExpiry - 5_000, 0);
+
+      const timer = window.setTimeout(() => {
+        void (async () => {
+          const ok = await refreshSession();
+          if (!ok) {
+            logout();
+            return;
+          }
+          const nextAccess = getAccessToken();
+          const nextUser = nextAccess ? getUserFromToken(nextAccess) : null;
+          if (nextUser) {
+            setUser(nextUser);
+          } else {
+            logout();
+          }
+        })();
+      }, wait);
+
+      return () => window.clearTimeout(timer);
     } catch {
-      // invalid token. Let the next API call handle it
+      // Invalid token. Let the next API call handle it.
     }
   }, [user, logout]);
 
   const value: AuthState = {
     user,
     isAuthenticated: user !== null,
+    ready,
     login,
     register,
     logout,

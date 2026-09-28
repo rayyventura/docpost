@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { apiRequest } from '../api/client';
+import { apiRequest, getAccessToken } from '../api/client';
 import { ContentReveal } from '../ContentReveal';
 import { PageLoading } from '../PageLoading';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Pagination } from '../Pagination';
@@ -299,15 +299,15 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
   useEffect(() => {
     if (!selectedJobId) return;
 
-    const token = sessionStorage.getItem('accessToken');
-    if (!token) return;
-
     let socket: WebSocket | null = null;
     let closed = false;
     let attempt = 0;
     let timer = 0;
 
     const connect = () => {
+      const token = getAccessToken();
+      if (!token) return;
+
       socket = new WebSocket(deliverySocketUrl(token));
 
       socket.onopen = () => {
