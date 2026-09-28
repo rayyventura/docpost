@@ -15,6 +15,7 @@ const s3 = vi.hoisted(() => ({
   presignDownload: vi.fn(),
   initiateMultipartUpload: vi.fn(),
   resignMultipartParts: vi.fn(),
+  PART_SIZE: 16 * 1024 * 1024,
 }));
 vi.mock('../lib/s3.js', () => s3);
 
@@ -138,11 +139,22 @@ describe('POST /files/:fileId/multipart', () => {
     expect(s3.initiateMultipartUpload).not.toHaveBeenCalled();
   });
 
-  it.each([[[0]], [['1']], [[-2]]])('rejects invalid partNumbers %j', async (partNumbers) => {
+  // 200 MB at 16 MB parts = 13 parts.
+  it.each([[[0]], [['1']], [[-2]], [[1.5]], [[14]], [[]], [[1, Number.MAX_SAFE_INTEGER]]])(
+    'rejects invalid partNumbers %j', async (partNumbers) => {
     db.results.push([fileRow]);
     const res = await call(userToken(owner), { uploadId: 'up-1', partNumbers });
     expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(s3.resignMultipartParts).not.toHaveBeenCalled();
+  });
+
+  it('accepts the last part number of the plan', async () => {
+    db.results.push([fileRow]);
+    s3.resignMultipartParts.mockResolvedValue(plan);
+    const res = await call(userToken(owner), { uploadId: 'up-1', partNumbers: [13] });
+    expect(res.status).toBe(200);
+    expect(s3.resignMultipartParts).toHaveBeenCalledWith(fileRow.s3Key, 'up-1', [13], 200 * 1024 * 1024);
   });
 
   it('404s for an unknown file', async () => {
@@ -150,18 +162,29 @@ describe('POST /files/:fileId/multipart', () => {
     expect((await call(userToken(owner))).status).toBe(404);
   });
 
-  it('refuses a user who does not own the file', async () => {
+  it.each([
+    ['a teammate', () => teammate],
+    ['a stranger', () => stranger],
+  ])('404s (not 403) for %s who does not own the file (blueprint)', async (_label, who) => {
     db.results.push([fileRow]);
-    const res = await call(userToken(teammate));
-    expect(res.status).toBeGreaterThanOrEqual(403);
+    const res = await call(userToken(who()), { uploadId: 'up-1', partNumbers: [1] });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
     expect(s3.initiateMultipartUpload).not.toHaveBeenCalled();
+    expect(s3.resignMultipartParts).not.toHaveBeenCalled();
   });
 
-  // BUG (spec drift): blueprint says multipart is "submitter-only, same as the job reads",
-  // and job/file reads answer 404 outside scope so existence is not confirmed. The route
-  // answers 403 ForbiddenError for someone else's file.
-  it.fails('404s (not 403) for a user who does not own the file (blueprint)', async () => {
-    db.results.push([fileRow]);
-    expect((await call(userToken(stranger))).status).toBe(404);
+  it('404s for a malformed file id without querying the database', async () => {
+    const res = await httpRequest(server.baseUrl, 'POST', '/files/not-a-uuid/multipart', { token: userToken(owner) });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('POST /files/:fileId/download-url with a malformed id', () => {
+  it('404s without querying the database', async () => {
+    const res = await httpRequest(server.baseUrl, 'POST', '/files/123/download-url', { token: userToken(owner) });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 });

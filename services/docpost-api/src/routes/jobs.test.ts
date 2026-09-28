@@ -351,14 +351,39 @@ describe('computeAggregateStatus', () => {
     expect(computeAggregateStatus(counts({ completed: 5 }))).toBe('completed');
   });
 
-  it('is terminal (not pending/in_progress) when some failed and nothing is outstanding', () => {
-    expect(['pending', 'in_progress']).not.toContain(computeAggregateStatus(counts({ completed: 2, failed: 1 })));
-    expect(['pending', 'in_progress']).not.toContain(computeAggregateStatus(counts({ failed: 3 })));
+  it('is completed_with_errors when some failed and nothing is outstanding (blueprint)', () => {
+    expect(computeAggregateStatus(counts({ completed: 2, failed: 1 }))).toBe('completed_with_errors');
   });
 
-  // BUG (spec drift): the blueprint's derivation rule names this state
-  // `completed_with_errors`; the API (and the web client's mirror of it) return 'failed'.
-  it.fails('is completed_with_errors when some failed and nothing is outstanding (blueprint)', () => {
-    expect(computeAggregateStatus(counts({ completed: 2, failed: 1 }))).toBe('completed_with_errors');
+  it('is completed_with_errors when every task failed', () => {
+    expect(computeAggregateStatus(counts({ failed: 3 }))).toBe('completed_with_errors');
+  });
+
+  it("never returns the old 'failed' job status", () => {
+    const samples = [{ failed: 1 }, { failed: 2, completed: 1 }, { failed: 1, pending: 1 }, { failed: 1, in_progress: 1 }];
+    for (const sample of samples) {
+      expect(computeAggregateStatus(counts(sample))).not.toBe('failed');
+    }
+  });
+});
+
+describe('routing', () => {
+  it('404s (not 401) for an unknown route', async () => {
+    const res = await httpRequest(server.baseUrl, 'GET', '/no-such-route');
+    expect(res.status).toBe(404);
+  });
+
+  it.each(['/jobs/not-a-uuid', '/jobs/not-a-uuid/tasks', "/jobs/1'%20OR%201=1"])(
+    'GET %s 404s for a malformed job id without querying the database',
+    async (path) => {
+      const res = await httpRequest(server.baseUrl, 'GET', path, { token });
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    },
+  );
+
+  it('still requires authentication before looking at the id', async () => {
+    const res = await httpRequest(server.baseUrl, 'GET', '/jobs/not-a-uuid');
+    expect(res.status).toBe(401);
   });
 });

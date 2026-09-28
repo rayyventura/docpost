@@ -4,7 +4,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
 const EXPIRY = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100 MB
-const PART_SIZE = 16 * 1024 * 1024; // 16 MB
+export const PART_SIZE = 16 * 1024 * 1024; // 16 MB
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -12,6 +12,10 @@ const s3 = new S3Client({
     endpoint: process.env.S3_ENDPOINT,
     forcePathStyle: true,
   }),
+  // Presigned URLs are signed before the body exists. With the SDK default
+  // ('WHEN_SUPPORTED') it bakes a CRC32 of the *empty* command body into every
+  // PutObject/UploadPart URL, so S3 rejects any real upload through it.
+  requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 
 export { s3, BUCKET };

@@ -4,9 +4,16 @@ import { errorHandler } from '@docpost/shared';
 import { httpRequest, listen, type TestServer } from '../test-utils/http.js';
 import { userToken } from '../test-utils/fakeAuth.js';
 
-vi.mock('../middleware/auth.js', async () => ({
-  requireUserAuth: (await import('../test-utils/fakeAuth.js')).fakeRequireUserAuth,
-}));
+const auth = vi.hoisted(() => ({ calls: 0 }));
+vi.mock('../middleware/auth.js', async () => {
+  const { fakeRequireUserAuth } = await import('../test-utils/fakeAuth.js');
+  return {
+    requireUserAuth: (...args: Parameters<typeof fakeRequireUserAuth>) => {
+      auth.calls += 1;
+      fakeRequireUserAuth(...args);
+    },
+  };
+});
 
 const { default: destinationsRouter } = await import('./destinations.js');
 
@@ -19,6 +26,10 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeAll(async () => {
   const app = express();
   app.use(destinationsRouter);
+  // Stands in for the routers mounted after this one in app.ts (jobs, files).
+  app.get('/jobs', (_req, res) => {
+    res.json({ reached: true });
+  });
   app.use(errorHandler);
   server = await listen(app);
 });
@@ -28,6 +39,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  auth.calls = 0;
   fetchMock = vi.fn(async () => Response.json([{ id: 't1', name: 'Team One' }]));
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -48,6 +60,25 @@ describe('destinations proxy', () => {
   it.each(routes)('%s requires authentication', async (path) => {
     const res = await httpRequest(server.baseUrl, 'GET', path);
     expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(routes)('%s verifies the JWT exactly once per request', async (path) => {
+    await httpRequest(server.baseUrl, 'GET', path, { token });
+    expect(auth.calls).toBe(1);
+  });
+
+  it('does not authenticate routes outside /destinations (mounted at root)', async () => {
+    const res = await httpRequest(server.baseUrl, 'GET', '/jobs');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ reached: true });
+    expect(auth.calls).toBe(0);
+  });
+
+  it('lets unknown routes fall through to 404 instead of 401', async () => {
+    const res = await httpRequest(server.baseUrl, 'GET', '/no-such-route');
+    expect(res.status).toBe(404);
+    expect(auth.calls).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -74,6 +74,20 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       expect(res.status).toBe(403);
     });
 
+    it('answers 404 (not 401) for an unknown route', async () => {
+      expect((await h.api('GET', '/no-such-route')).status).toBe(404);
+      expect((await h.api('GET', '/no-such-route', { token: ownerToken })).status).toBe(404);
+    });
+
+    it.each([
+      '/destinations/teams/x/binders',
+      '/destinations/binders/x/contents',
+      '/destinations/folders/x/contents',
+      '/destinations/documents/x/download',
+    ])('GET %s returns 401 without a token', async (path) => {
+      expect((await h.api('GET', path)).status).toBe(401);
+    });
+
     it('leaves /health open', async () => {
       expect((await h.api('GET', '/health')).status).toBe(200);
     });
@@ -192,15 +206,16 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       });
     });
 
-    // BUG: the single-request plan is a presigned PutObject URL with the SDK's CRC32 of
-    // an *empty* body baked in (x-amz-checksum-crc32=AAAAAA==). S3/LocalStack reject any
-    // real upload through it with 400 InvalidRequest, so browsers cannot upload.
-    // (Blueprint also calls for a presigned POST with policy conditions, see s3.test.ts.)
-    it.fails('the returned upload plan actually uploads the bytes to LocalStack', async () => {
+    // Regression: the plan used to carry the SDK's CRC32 of an *empty* body
+    // (x-amz-checksum-crc32=AAAAAA==) and S3/LocalStack rejected every real upload.
+    // (The blueprint's presigned POST with policy conditions is still pending, see s3.test.ts.)
+    it('the returned upload plan actually uploads the bytes to LocalStack', async () => {
       const bytes = Buffer.from('%PDF-1.4 integration upload');
       const res = await submit({ files: [await fileFor('upload.pdf', bytes)], destinations: [dest(0)] });
+      expect(res.status).toBe(201);
       const [plan] = res.body.uploads as Array<{ presignedUrl: string; fields: { key: string; contentType: string } }>;
       h.trackS3Key(plan.fields.key);
+      expect(new URL(plan.presignedUrl).searchParams.get('x-amz-checksum-crc32')).toBeNull();
 
       const put = await fetch(plan.presignedUrl, {
         method: 'PUT',
@@ -211,6 +226,7 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       expect(put.status).toBe(200);
       const head = await h.s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: plan.fields.key }));
       expect(head.ContentLength).toBe(bytes.length);
+      expect(head.ContentType).toBe('application/pdf');
     });
 
     it('returns a lazy multipart plan for files over 100 MB and initiates it on demand', async () => {
@@ -240,19 +256,37 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       expect(abort.status).toBe(204);
     });
 
-    // BUG: part URLs carry the same empty-body CRC32 checksum; LocalStack answers
-    // 400 "Checksum Type mismatch" to a real part upload.
-    it.fails('a multipart part URL accepts a real part upload', async () => {
+    // Regression: part URLs carried the same empty-body CRC32 checksum and LocalStack
+    // answered 400 "Checksum Type mismatch" to a real part upload.
+    it('a multipart part URL accepts a real part upload', async () => {
       const res = await submit({
         files: [{ name: 'scan2.pdf', sizeBytes: 100 * MB + 1, contentType: 'application/pdf', sha256: 'x' }],
         destinations: [dest(0)],
       });
       const init = await h.api('POST', `/files/${res.body.uploads[0].fileId}/multipart`, { token: ownerToken });
+      expect(init.status).toBe(200);
       try {
         const put = await fetch(init.body.parts[0].url, { method: 'PUT', body: Buffer.alloc(16 * MB, 1) });
         expect(put.status).toBe(200);
+        expect(put.headers.get('etag')).toBeTruthy();
       } finally {
         await fetch(init.body.abortUrl, { method: 'DELETE' });
+      }
+    });
+
+    it('rejects re-signing a fractional or out-of-range part number with 422', async () => {
+      const res = await submit({
+        files: [{ name: 'scan3.pdf', sizeBytes: 100 * MB + 1, contentType: 'application/pdf', sha256: 'x' }],
+        destinations: [dest(0)],
+      });
+      const fileId = res.body.uploads[0].fileId;
+      for (const partNumbers of [[1.5], [8], [0]]) {
+        const resign = await h.api('POST', `/files/${fileId}/multipart`, {
+          token: ownerToken,
+          body: { uploadId: 'any-upload', partNumbers },
+        });
+        expect(resign.status).toBe(422);
+        expect(resign.body.error.code).toBe('VALIDATION_ERROR');
       }
     });
 
@@ -264,7 +298,10 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       const { jobId } = res.body;
       const fileId = res.body.uploads[0].fileId;
 
-      expect((await h.api('POST', `/files/${fileId}/multipart`, { token: strangerToken })).status).toBe(403);
+      expect((await h.api('POST', `/files/${fileId}/multipart`, { token: strangerToken })).status).toBe(404);
+      // A teammate can see the job but only the submitter may upload its bytes.
+      expect((await h.api('POST', `/files/${fileId}/multipart`, { token: teammateToken })).status).toBe(404);
+      expect((await h.api('GET', `/jobs/${jobId}`, { token: teammateToken })).status).toBe(200);
       expect((await h.api('GET', `/jobs/${jobId}`, { token: strangerToken })).status).toBe(404);
       expect((await h.api('GET', `/jobs/${jobId}/tasks`, { token: strangerToken })).status).toBe(404);
     });
@@ -323,14 +360,16 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       expect((await statusOf()).aggregateStatus).toBe('completed');
     });
 
-    it('is terminal when some failed and nothing is outstanding', async () => {
+    it('is completed_with_errors when some failed and nothing is outstanding (blueprint)', async () => {
       await setStatuses(['completed', 'failed', 'completed']);
-      expect(['pending', 'in_progress', 'completed']).not.toContain((await statusOf()).aggregateStatus);
+      expect((await statusOf()).aggregateStatus).toBe('completed_with_errors');
+      const list = await h.api('GET', '/jobs?limit=100', { token: ownerToken });
+      const listed = list.body.jobs.find((j: { jobId: string }) => j.jobId === jobId);
+      expect(listed.aggregateStatus).toBe('completed_with_errors');
     });
 
-    // BUG (spec drift): blueprint names this `completed_with_errors`; API returns 'failed'.
-    it.fails('is completed_with_errors when some failed and nothing is outstanding (blueprint)', async () => {
-      await setStatuses(['completed', 'failed', 'completed']);
+    it('is completed_with_errors when every task failed', async () => {
+      await setStatuses(['failed', 'failed', 'failed']);
       expect((await statusOf()).aggregateStatus).toBe('completed_with_errors');
     });
 
@@ -383,6 +422,36 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       const failed = await h.api('GET', `/jobs/${jobId}/tasks?status=failed`, { token: ownerToken });
       expect(failed.body.total).toBe(1);
       expect(failed.body.tasks[0]).toMatchObject({ folderId: folderIds[1], failureReason: 'FILE_NOT_UPLOADED' });
+    });
+  });
+
+  describe('failure reasons', () => {
+    it('passes the recorded failure reason through unchanged', async () => {
+      const res = await submit({
+        files: [await fileFor('r.pdf', Buffer.from('reasons'))],
+        destinations: [dest(0), dest(1)],
+      });
+      const { jobId } = res.body;
+      const platformReason =
+        'Platform rejected the document (422 CHECKSUM_MISMATCH): Declared checksum does not match "r.pdf" → ünïcode';
+      const structured = `NOT_AUTHORIZED_AT_DELIVERY ${JSON.stringify({ fileName: 'r.pdf', status: 403, code: 'FORBIDDEN', message: 'Not a member' })}`;
+      await h.db
+        .update(h.schema.tasks)
+        .set({ status: 'failed', failureReason: platformReason })
+        .where(and(eq(h.schema.tasks.jobId, jobId), eq(h.schema.tasks.folderId, folderIds[0])));
+      await h.db
+        .update(h.schema.tasks)
+        .set({ status: 'failed', failureReason: structured })
+        .where(and(eq(h.schema.tasks.jobId, jobId), eq(h.schema.tasks.folderId, folderIds[1])));
+
+      const list = await h.api('GET', `/jobs/${jobId}/tasks`, { token: ownerToken });
+      expect(list.status).toBe(200);
+      const byFolder = new Map(list.body.tasks.map((t: { folderId: string; failureReason: string }) => [t.folderId, t.failureReason]));
+      expect(byFolder.get(folderIds[0])).toBe(platformReason);
+      expect(byFolder.get(folderIds[1])).toBe(structured);
+
+      const detail = await h.api('GET', `/jobs/${jobId}`, { token: ownerToken });
+      expect(detail.body.aggregateStatus).toBe('completed_with_errors');
     });
   });
 
@@ -459,11 +528,17 @@ describe.skipIf(!process.env.INTEGRATION)('jobs API (integration)', () => {
       expect(res.status).toBe(404);
     });
 
-    // BUG: a non-UUID id reaches Postgres ("invalid input syntax for type uuid") and
-    // surfaces as 500 INTERNAL_ERROR instead of 404.
-    it.fails('404s for a malformed job id', async () => {
-      const res = await h.api('GET', '/jobs/not-a-uuid', { token: ownerToken });
+    // Regression: a non-UUID id reached Postgres ("invalid input syntax for type uuid")
+    // and surfaced as 500 INTERNAL_ERROR instead of 404.
+    it.each(['/jobs/not-a-uuid', '/jobs/not-a-uuid/tasks', '/jobs/12345'])('404s for a malformed job id (%s)', async (path) => {
+      const res = await h.api('GET', path, { token: ownerToken });
       expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+
+    it('404s for a malformed file id', async () => {
+      expect((await h.api('POST', '/files/not-a-uuid/multipart', { token: ownerToken })).status).toBe(404);
+      expect((await h.api('POST', '/files/not-a-uuid/download-url', { token: ownerToken })).status).toBe(404);
     });
   });
 });

@@ -2244,7 +2244,8 @@ input[type="file"],
   color: var(--color-success);
 }
 
-.status-failed {
+.status-failed,
+.status-completed-with-errors {
   background: var(--color-error-bg);
   color: var(--color-error);
 }

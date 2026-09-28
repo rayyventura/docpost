@@ -7,6 +7,7 @@ import { generateUploadPlan, type UploadPlan } from '../lib/s3.js';
 import { publishJobMessage } from '../lib/sqs.js';
 import { assertFolderDestinations, destinationPaths, teamName, visibleSubmitterIds, visibleTeams } from '../lib/access.js';
 import { reconcileExhaustedTasks } from '../lib/reconcile.js';
+import { isUuid } from '../lib/ids.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '@docpost/shared';
 import { createJobSchema, parsedDestinations, tooManyDestinationsMessage, totalSupportedDestinations } from '../lib/createJobSchema.js';
 
@@ -247,6 +248,10 @@ router.get('/jobs/:id', requireUserAuth, async (req: Request, res: Response, nex
     const userId = req.user!.sub;
     const db = getDb();
 
+    if (!isUuid(req.params.id)) {
+      throw new NotFoundError('Job not found');
+    }
+
     const [job] = await db
       .select()
       .from(jobs)
@@ -302,6 +307,10 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
   try {
     const userId = req.user!.sub;
     const db = getDb();
+
+    if (!isUuid(req.params.id)) {
+      throw new NotFoundError('Job not found');
+    }
 
     const [job] = await db
       .select({ id: jobs.id, submittedByUserId: jobs.submittedByUserId })
@@ -391,12 +400,17 @@ router.get('/jobs/:id/tasks', requireUserAuth, async (req: Request, res: Respons
 
 // ---------- Helpers ----------
 
-export function computeAggregateStatus(counts: Record<string, number>): string {
+export type AggregateStatus = 'pending' | 'in_progress' | 'completed' | 'completed_with_errors';
+
+// Blueprint derivation: all completed -> completed; any failed with nothing
+// pending/in_progress -> completed_with_errors; nothing started -> pending;
+// otherwise in_progress.
+export function computeAggregateStatus(counts: Record<string, number>): AggregateStatus {
   const { pending = 0, in_progress = 0, completed = 0, failed = 0 } = counts;
   const total = pending + in_progress + completed + failed;
   if (total === 0) return 'pending';
   if (completed === total) return 'completed';
-  if (failed > 0 && pending === 0 && in_progress === 0) return 'failed';
+  if (failed > 0 && pending === 0 && in_progress === 0) return 'completed_with_errors';
   if (pending === total) return 'pending';
   return 'in_progress';
 }

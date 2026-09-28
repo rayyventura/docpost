@@ -1,11 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { requireUserAuth } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { files, jobs } from '../db/schema.js';
-import { initiateMultipartUpload, resignMultipartParts, presignDownload } from '../lib/s3.js';
+import { initiateMultipartUpload, resignMultipartParts, presignDownload, PART_SIZE } from '../lib/s3.js';
 import { visibleSubmitterIds } from '../lib/access.js';
-import { NotFoundError, ForbiddenError, ValidationError } from '@docpost/shared';
+import { isUuid } from '../lib/ids.js';
+import { NotFoundError, ValidationError } from '@docpost/shared';
 
 const router = Router();
 
@@ -16,17 +17,19 @@ router.post('/files/:fileId/multipart', requireUserAuth, async (req: Request, re
     const db = getDb();
 
     const fileId = req.params.fileId;
-    const [file] = await db
-      .select()
-      .from(files)
-      .where(sql`${files.id} = ${fileId}`);
-
-    if (!file) {
+    if (!isUuid(fileId)) {
       throw new NotFoundError('File not found');
     }
 
-    if (file.ownerUserId !== userId) {
-      throw new ForbiddenError('Not authorized to upload this file');
+    const [file] = await db
+      .select()
+      .from(files)
+      .where(eq(files.id, fileId));
+
+    // Submitter-only, and 404 (not 403) otherwise so existence is not confirmed,
+    // the same as the job reads.
+    if (!file || file.ownerUserId !== userId) {
+      throw new NotFoundError('File not found');
     }
 
     const sizeBytes = Number(file.sizeBytes);
@@ -34,8 +37,15 @@ router.post('/files/:fileId/multipart', requireUserAuth, async (req: Request, re
 
     if (uploadId && Array.isArray(partNumbers)) {
       // Re-sign mode: re-sign specific parts for an existing upload
-      if (partNumbers.some((n: unknown) => typeof n !== 'number' || n < 1)) {
-        throw new ValidationError('partNumbers must be positive integers');
+      if (typeof uploadId !== 'string') {
+        throw new ValidationError('uploadId must be a string');
+      }
+      const partCount = Math.ceil(sizeBytes / PART_SIZE);
+      if (
+        partNumbers.length === 0 ||
+        partNumbers.some((n: unknown) => !Number.isInteger(n) || (n as number) < 1 || (n as number) > partCount)
+      ) {
+        throw new ValidationError(`partNumbers must be integers between 1 and ${partCount}`);
       }
       const result = await resignMultipartParts(file.s3Key, uploadId, partNumbers, sizeBytes);
       res.json(result);
@@ -53,6 +63,9 @@ router.post('/files/:fileId/download-url', requireUserAuth, async (req: Request,
   try {
     const userId = req.user!.sub;
     const fileId = req.params.fileId as string;
+    if (!isUuid(fileId)) {
+      throw new NotFoundError('File not found');
+    }
     const header = req.headers.authorization ?? '';
     const userToken = header.startsWith('Bearer ') ? header.slice(7) : '';
     const db = getDb();

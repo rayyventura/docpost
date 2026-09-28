@@ -45,11 +45,12 @@ async function proxyToPlatform(
   }
 }
 
-// All routes require user authentication
-router.use(requireUserAuth);
-
+// Every route requires user authentication. The middleware is attached per route
+// (not router.use) because this router is mounted at the root: a router-level
+// use() would also run for /jobs and /files (verifying the JWT twice) and turn
+// unknown paths into 401 instead of 404.
 // GET /destinations/teams
-router.get('/destinations/teams', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/destinations/teams', requireUserAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authorization = req.headers.authorization;
     if (!authorization) {
@@ -66,7 +67,7 @@ router.get('/destinations/teams', async (req: Request, res: Response, next: Next
 
 // GET /destinations/teams/:id/binders
 router.get(
-  '/destinations/teams/:id/binders',
+  '/destinations/teams/:id/binders', requireUserAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authorization = req.headers.authorization;
@@ -90,7 +91,7 @@ router.get(
 
 // GET /destinations/binders/:id/contents
 router.get(
-  '/destinations/binders/:id/contents',
+  '/destinations/binders/:id/contents', requireUserAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authorization = req.headers.authorization;
@@ -113,7 +114,7 @@ router.get(
 );
 
 router.get(
-  '/destinations/documents/:id/download',
+  '/destinations/documents/:id/download', requireUserAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authorization = req.headers.authorization;
@@ -135,7 +136,7 @@ router.get(
 
 // GET /destinations/folders/:id/contents
 router.get(
-  '/destinations/folders/:id/contents',
+  '/destinations/folders/:id/contents', requireUserAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authorization = req.headers.authorization;

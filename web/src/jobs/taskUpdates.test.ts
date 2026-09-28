@@ -62,6 +62,30 @@ describe('applyTaskUpdate', () => {
   });
 });
 
+describe('failure reasons', () => {
+  const platformReason =
+    'Platform rejected the document (422 CHECKSUM_MISMATCH): Declared checksum does not match uploaded bytes';
+
+  it('records the failure reason pushed with a live task_update', () => {
+    const rows = [task({ taskId: 'real-1', status: 'in_progress', attemptCount: 1 })];
+    const result = applyTaskUpdate(rows, { taskId: 'real-1', status: 'failed', failureReason: platformReason });
+    expect(result.tasks[0]).toMatchObject({ status: 'failed', failureReason: platformReason });
+  });
+
+  it('keeps a live failure reason when a stale fetch still says in progress', () => {
+    const live = [task({ taskId: 'real-1', status: 'failed', failureReason: platformReason })];
+    const stale = [task({ taskId: 'real-1', status: 'in_progress', failureReason: null })];
+    expect(mergeFetchedTasks(live, stale)[0]).toMatchObject({ status: 'failed', failureReason: platformReason });
+  });
+
+  it('takes the failure reason from GET /jobs/:id/tasks on first load', () => {
+    const fetched = [task({ taskId: 'real-1', status: 'failed', failureReason: platformReason })];
+    expect(mergeFetchedTasks([], fetched)[0].failureReason).toBe(platformReason);
+    const seeded = [task({ taskId: 'pending-job-0' })];
+    expect(mergeFetchedTasks(seeded, fetched)[0].failureReason).toBe(platformReason);
+  });
+});
+
 describe('mergeFetchedTasks', () => {
   it('does not roll a live in-progress row back to a stale pending fetch', () => {
     const live = [task({ taskId: 'real-1', status: 'in_progress', attemptCount: 1 })];

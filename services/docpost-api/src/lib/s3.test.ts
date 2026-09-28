@@ -45,11 +45,12 @@ describe('generateUploadPlan', () => {
     expect(url.searchParams.get('X-Amz-SignedHeaders')?.split(';')).toContain('content-length');
   });
 
-  // BUG: blueprint "Upload URL issuance rules" require a presigned POST whose policy
+  // BLOCKED (still a bug): blueprint "Upload URL issuance rules" require a presigned POST whose policy
   // carries content-length-range, an exact Content-Type condition and an
   // x-amz-checksum-sha256 condition. The implementation signs a PutObject URL instead:
   // Content-Type is not a signed header and the declared SHA-256 is only echoed back
-  // in `fields`, so S3 does not enforce either.
+  // in `fields`, so S3 does not enforce either. Fixing this needs
+  // @aws-sdk/s3-presigned-post, which is not installed in this workspace yet.
   it.fails('issues a presigned POST whose policy enforces content-type and sha256 (blueprint)', async () => {
     const plan = await s3.generateUploadPlan('file-5', 'uploads/j/f/a.pdf', 'application/pdf', 'c2hh', 12);
     if (!('presignedUrl' in plan)) throw new Error('expected single-request plan');
@@ -63,14 +64,17 @@ describe('generateUploadPlan', () => {
     expect(policy.conditions).toContainEqual({ 'x-amz-checksum-sha256': 'c2hh' });
   });
 
-  // BUG: the SDK's default flexible checksums compute a CRC32 of the *empty* command
-  // body at signing time and bake it into the URL (x-amz-checksum-crc32=AAAAAA==).
-  // Any real upload through that URL is then rejected by S3 (reproduced against
-  // LocalStack in jobs.integration.test.ts).
-  it.fails('does not pin a checksum of an empty body into the upload URL', async () => {
+  // Regression: the SDK's default flexible checksums computed a CRC32 of the *empty*
+  // command body at signing time and baked it into the URL (x-amz-checksum-crc32=AAAAAA==),
+  // so S3 rejected every real upload through it.
+  it('does not pin a checksum of an empty body into the upload URL', async () => {
     const plan = await s3.generateUploadPlan('file-6', 'uploads/j/f/a.pdf', 'application/pdf', 'sha', 12);
     if (!('presignedUrl' in plan)) throw new Error('expected single-request plan');
-    expect(new URL(plan.presignedUrl).searchParams.get('x-amz-checksum-crc32')).toBeNull();
+    const url = new URL(plan.presignedUrl);
+    expect(url.searchParams.get('x-amz-checksum-crc32')).toBeNull();
+    expect(url.searchParams.get('x-amz-sdk-checksum-algorithm')).toBeNull();
+    const signed = url.searchParams.get('X-Amz-SignedHeaders')?.split(';') ?? [];
+    expect(signed.some((h) => h.startsWith('x-amz-checksum') || h === 'x-amz-sdk-checksum-algorithm')).toBe(false);
   });
 });
 
@@ -105,12 +109,15 @@ describe('resignMultipartParts', () => {
     expect(abort.searchParams.get('x-id')).toBe('AbortMultipartUpload');
   });
 
-  // BUG: same empty-body CRC32 problem as the single-request plan; part uploads are
-  // rejected by S3 with "Checksum Type mismatch".
-  it.fails('does not pin a checksum into part upload URLs', async () => {
-    const result = await s3.resignMultipartParts('k', 'upload-123', [1], 20 * MB);
-    const url = new URL(result.parts[0].url);
-    expect(url.searchParams.get('x-amz-checksum-crc32')).toBeNull();
-    expect(url.searchParams.get('x-amz-sdk-checksum-algorithm')).toBeNull();
+  // Regression: part URLs carried the same empty-body CRC32 checksum, and S3 answered
+  // "Checksum Type mismatch" to every real part upload.
+  it('does not pin a checksum into part upload URLs', async () => {
+    const result = await s3.resignMultipartParts('k', 'upload-123', [1, 2], 20 * MB);
+    for (const part of result.parts) {
+      const url = new URL(part.url);
+      expect(url.searchParams.get('x-amz-checksum-crc32')).toBeNull();
+      expect(url.searchParams.get('x-amz-sdk-checksum-algorithm')).toBeNull();
+      expect(url.searchParams.get('x-id')).toBe('UploadPart');
+    }
   });
 });

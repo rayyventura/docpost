@@ -95,15 +95,15 @@ describe.skipIf(!process.env.INTEGRATION)('files API (integration)', () => {
     expect((await downloadUrl(crypto.randomUUID(), ownerToken)).status).toBe(404);
   });
 
-  it("refuses multipart initiation on someone else's file", async () => {
-    const res = await h.api('POST', `/files/${pendingFileId}/multipart`, { token: strangerToken });
-    expect(res.status).toBe(403);
-  });
-
-  // BUG (spec drift): blueprint says multipart is "submitter-only, same as the job reads",
-  // which answer 404 outside scope; the route answers 403 and so confirms the file exists.
-  it.fails("404s multipart initiation on someone else's file (blueprint)", async () => {
+  // Blueprint: multipart is "submitter-only, same as the job reads", which answer 404
+  // outside scope so the file's existence is not confirmed.
+  it("404s multipart initiation on someone else's file (blueprint)", async () => {
     const res = await h.api('POST', `/files/${pendingFileId}/multipart`, { token: strangerToken });
     expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    // Same answer as a file that does not exist at all.
+    const unknown = await h.api('POST', `/files/${crypto.randomUUID()}/multipart`, { token: strangerToken });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toEqual(res.body);
   });
 });
