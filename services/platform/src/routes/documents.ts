@@ -8,6 +8,7 @@ import multer from 'multer';
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { binders, teamMembers, folders, documents } from '../db/schema.js';
+import { getDocumentObjectStream, putDocumentObject, usesObjectStorage } from '../lib/s3.js';
 import { requireServiceAuth, requireUserAuth } from '../middleware/auth.js';
 
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -120,16 +121,26 @@ router.get(
         throw new ForbiddenError();
       }
 
+      const filename = document.name.replace(/["\r\n]/g, '');
+      res.setHeader('Content-Type', document.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      if (usesObjectStorage()) {
+        const stream = await getDocumentObjectStream(document.id);
+        if (!stream) {
+          throw new NotFoundError('The file is no longer available to download');
+        }
+        stream.pipe(res);
+        return;
+      }
+
       const filePath = path.join(path.resolve(process.cwd(), 'uploads'), document.id);
       try {
         await fs.access(filePath);
       } catch {
-        throw new NotFoundError('Document not found');
+        throw new NotFoundError('The file is no longer available to download');
       }
 
-      const filename = document.name.replace(/["\r\n]/g, '');
-      res.setHeader('Content-Type', document.contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       createReadStream(filePath).pipe(res);
     } catch (err) {
       next(err);
@@ -215,11 +226,6 @@ router.post(
         );
       }
 
-      // Store file to uploads directory
-      const uploadsDir = path.resolve(process.cwd(), 'uploads');
-      await fs.mkdir(uploadsDir, { recursive: true });
-
-      // Try to insert document with ON CONFLICT (source_task_id) DO NOTHING
       const insertResult = await db
         .insert(documents)
         .values({
@@ -236,10 +242,14 @@ router.post(
         .returning({ id: documents.id });
 
       if (insertResult.length > 0) {
-        // Newly inserted: save the file
         const documentId = insertResult[0].id;
-        const filePath = path.join(uploadsDir, documentId);
-        await fs.writeFile(filePath, fileBuffer);
+        if (usesObjectStorage()) {
+          await putDocumentObject(documentId, fileBuffer, metadata.contentType);
+        } else {
+          const uploadsDir = path.resolve(process.cwd(), 'uploads');
+          await fs.mkdir(uploadsDir, { recursive: true });
+          await fs.writeFile(path.join(uploadsDir, documentId), fileBuffer);
+        }
 
         res.status(201).json({ documentId });
       } else {
