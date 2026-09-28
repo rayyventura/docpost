@@ -85,20 +85,20 @@ export function NewJobPage() {
         sha256: f.sha256,
       }));
 
-      const mappingPayload = readyFiles.map((_, i) => ({
-        fileIndex: i,
-        destinations: destinations
-          .filter((d) => d.binderId && d.folderId)
-          .map((d) => ({
-            teamId: d.teamId,
-            binderId: d.binderId,
-            folderId: d.folderId,
-          })),
-      }));
+      const destinationPayload = destinations
+        .filter((d) => d.binderId && d.folderId)
+        .map((d) => ({
+          teamId: d.teamId,
+          binderId: d.binderId,
+          folderId: d.folderId,
+        }));
 
       const response = await apiRequest<JobSubmitResponse>('/jobs', {
         method: 'POST',
-        body: JSON.stringify({ files: filePayload, mappings: mappingPayload }),
+        body: JSON.stringify({
+          files: filePayload,
+          destinations: destinationPayload,
+        }),
       });
 
       const updatedFiles = files.map((file) => {
