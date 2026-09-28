@@ -44,7 +44,7 @@ interface NodeContents {
 
 interface DocumentsTreeProps {
   reveal?: FilesLocationState | null;
-  onActiveFolderChange: (target: SendLocationState | null) => void;
+  onSendHere: (target: SendLocationState) => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -135,7 +135,7 @@ function sendTargetFor(
   return { destination, folderPath };
 }
 
-export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreeProps) {
+export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
 
@@ -147,6 +147,7 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
   const [contentsByParent, setContentsByParent] = useState<Map<string, NodeContents>>(new Map());
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [focusDocumentId, setFocusDocumentId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState('');
 
@@ -291,13 +292,12 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
     markLoading(parentKey, false);
   }, [expandedFolders, loadContents, markLoading]);
 
-  const selectFolder = useCallback((folder: FolderNode, folderPath: string[]) => {
+  const selectFolder = useCallback((folder: FolderNode) => {
     setActiveFolderId(folder.id);
-    onActiveFolderChange(sendTargetFor(folder, folderPath));
     if (!expandedFolders.has(folder.id)) {
       void toggleFolder(folder);
     }
-  }, [expandedFolders, onActiveFolderChange, toggleFolder]);
+  }, [expandedFolders, toggleFolder]);
 
   useEffect(() => {
     if (loadingTeams || !reveal?.teamId || !reveal.binderId) return;
@@ -341,12 +341,11 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
         const path = reveal.folderPath ?? [];
         let siblings = binderContents.folders;
         let selected: FolderNode | undefined;
-        const folderIds: string[] = [];
+        let currentContents = binderContents;
 
         for (const [index, segment] of path.entries()) {
           const folder = siblings.find((item) => item.id === segment.id);
           if (!folder) break;
-          folderIds.push(folder.id);
           selected = folder;
           const isLast = index === path.length - 1;
           const childKey = `folder:${folder.id}`;
@@ -366,18 +365,24 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
           if (cancelled) return;
           setExpandedFolders((prev) => new Set(prev).add(folder.id));
           siblings = childContents.folders;
+          currentContents = childContents;
           if (isLast) break;
         }
 
         if (selected) {
           setActiveFolderId(selected.id);
-          onActiveFolderChange(sendTargetFor(selected, folderIds));
-          requestAnimationFrame(() => {
-            document.querySelector(`[data-folder-id="${selected.id}"]`)?.scrollIntoView({
-              block: 'center',
-              behavior: 'smooth',
-            });
-          });
+        }
+
+        const match = currentContents.documents.find((doc) => {
+          if (reveal.documentId && doc.id === reveal.documentId) return true;
+          if (reveal.fileName && doc.name === reveal.fileName) return true;
+          return false;
+        });
+
+        if (match) {
+          setFocusDocumentId(match.id);
+        } else if (selected) {
+          setFocusDocumentId(null);
         }
       } catch (err) {
         console.error(err);
@@ -388,7 +393,26 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
     return () => {
       cancelled = true;
     };
-  }, [loadingTeams, reveal, teams, loadBinders, loadContents, onActiveFolderChange]);
+  }, [loadingTeams, reveal, teams, loadBinders, loadContents]);
+
+  useEffect(() => {
+    if (!focusDocumentId) return;
+    let tries = 0;
+    let frame = 0;
+    const find = () => {
+      const row = document.querySelector<HTMLElement>(`[data-document-id="${focusDocumentId}"]`);
+      if (row) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (tries < 12) {
+        tries += 1;
+        frame = requestAnimationFrame(find);
+      }
+    };
+    find();
+    return () => cancelAnimationFrame(frame);
+  }, [focusDocumentId, contentsByParent, expandedFolders, expandedBinders]);
 
   async function downloadDocument(documentId: string, name: string) {
     setDownloadingId(documentId);
@@ -445,9 +469,16 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
                 <button
                   type="button"
                   className="tree-folder-name"
-                  onClick={() => selectFolder(folder, nextPath)}
+                  onClick={() => selectFolder(folder)}
                 >
                   {folder.name}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm tree-send-here"
+                  onClick={() => onSendHere(sendTargetFor(folder, nextPath))}
+                >
+                  Send documents here
                 </button>
               </div>
               {isExpanded && renderContents(childKey, depth + 1, nextPath)}
@@ -457,7 +488,8 @@ export function DocumentsTree({ reveal, onActiveFolderChange }: DocumentsTreePro
         {contents.documents.map((doc) => (
           <div
             key={doc.id}
-            className="tree-row tree-row-doc"
+            data-document-id={doc.id}
+            className={`tree-row tree-row-doc${focusDocumentId === doc.id ? ' tree-row-doc--focus' : ''}`}
             style={{ paddingLeft: `${depth * 20}px` }}
           >
             <span className="tree-arrow-gap" aria-hidden="true" />

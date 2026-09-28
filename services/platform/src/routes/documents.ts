@@ -236,14 +236,14 @@ router.post(
         .returning({ id: documents.id });
 
       if (insertResult.length > 0) {
-        // Newly inserted — save the file
+        // Newly inserted: save the file
         const documentId = insertResult[0].id;
         const filePath = path.join(uploadsDir, documentId);
         await fs.writeFile(filePath, fileBuffer);
 
         res.status(201).json({ documentId });
       } else {
-        // Conflict — document with this source_task_id already exists
+        // Conflict: document with this source_task_id already exists
         const existing = await db
           .select({ id: documents.id })
           .from(documents)

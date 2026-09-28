@@ -26,6 +26,7 @@ export function NewJobPage() {
   const [revealFolderPath, setRevealFolderPath] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
 
   useEffect(() => {
@@ -54,18 +55,23 @@ export function NewJobPage() {
   }, []);
 
   const readyFiles = files.filter((f) => f.status === 'ready');
+  const preparingFiles = files.some((f) => f.status === 'hashing');
   const missingFiles = readyFiles.length === 0;
   const missingDestinations = destinations.length === 0;
-  const canSubmit = !missingFiles && !missingDestinations && !submitting;
+  const canSubmit = !missingFiles && !missingDestinations && !submitting && !fileError && !error && !preparingFiles;
   const disabledReason = submitting
     ? undefined
-    : missingFiles && missingDestinations
-      ? 'Add at least one file and choose at least one destination'
-      : missingFiles
-        ? 'Add at least one file'
-        : missingDestinations
-          ? 'Choose at least one destination'
-          : undefined;
+    : fileError || error
+      ? 'Dismiss the error or add a file that can be sent'
+      : preparingFiles
+        ? 'Files are being prepared, please wait'
+        : missingFiles && missingDestinations
+          ? 'Add at least one file and choose at least one destination'
+          : missingFiles
+            ? 'Add at least one file'
+            : missingDestinations
+              ? 'Choose at least one destination'
+              : undefined;
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
@@ -112,6 +118,7 @@ export function NewJobPage() {
       setFiles([]);
       setDestinations([]);
       setError(null);
+      setFileError(null);
       setSubmitting(false);
       setFormKey((key) => key + 1);
       void navigate(`/deliveries/${response.jobId}`, {
@@ -168,6 +175,7 @@ export function NewJobPage() {
             files={files}
             onFilesAdded={handleFilesAdded}
             onFileRemoved={handleFileRemoved}
+            onErrorChange={setFileError}
             disabled={submitting}
             pageDrop={location.pathname === '/send'}
           />
@@ -197,7 +205,19 @@ export function NewJobPage() {
         </div>
       )}
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner error-banner--dismissible" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="error-banner-dismiss"
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className="job-actions">
         <span className="send-button-wrap" title={disabledReason}>
