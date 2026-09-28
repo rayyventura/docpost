@@ -291,7 +291,8 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
         if (message.type !== 'task_update' || message.jobId !== selectedJobId) return;
 
         const result = applyTaskUpdate(tasksRef.current, message);
-        if (result.matched && message.status) {
+        const nextStatus = message.status;
+        if (result.matched && nextStatus) {
           tasksRef.current = result.tasks;
           setTasks(result.tasks);
           setSelectedJob((current) => {
@@ -299,7 +300,7 @@ function JobDashboardView({ jobId }: { jobId: string | undefined }) {
             const counts = applyJobCounts(
               current.counts,
               result.previousStatus,
-              message.status,
+              nextStatus,
               message.counts,
             );
             return { ...current, counts, aggregateStatus: aggregateStatus(counts) };
