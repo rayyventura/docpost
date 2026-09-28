@@ -12,8 +12,11 @@ import {
   pgPool,
   s3Client,
   sqsClient,
+  stubServer,
+  json,
   TEST_BUCKET,
   useLocalInfraEnv,
+  type StubServer,
 } from './test-utils/integration.js';
 
 describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgres + LocalStack S3/SQS)', { timeout: 20_000 }, () => {
@@ -23,8 +26,9 @@ describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgre
   let taskQueueUrl: string;
   let handler: typeof import('./handler.js').handler;
   let closeDb: () => Promise<void>;
+  let apigw: StubServer;
 
-  const created = { jobs: [] as string[], keys: [] as string[] };
+  const created = { jobs: [] as string[], keys: [] as string[], connections: [] as string[] };
 
   beforeAll(async () => {
     useLocalInfraEnv();
@@ -39,12 +43,25 @@ describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgre
     process.env.TASK_QUEUE_URL = taskQueueUrl;
     pool = pgPool();
 
+    // Stand-in for the API Gateway management API (PostToConnection: POST /@connections/{id}).
+    apigw = await stubServer((req, res) => {
+      const id = decodeURIComponent(req.url.split('/').pop() ?? '');
+      if (id.startsWith('gone-')) {
+        json(res, 410, { message: 'Gone' }, { 'x-amzn-errortype': 'GoneException' });
+        return;
+      }
+      res.writeHead(200).end();
+    });
+    process.env.WS_CALLBACK_URL = apigw.url;
+    delete process.env.WS_PUSH_URL;
+
     ({ handler } = await import('./handler.js'));
     ({ closeDb } = await import('./db.js'));
   });
 
   afterAll(async () => {
     if (pool) {
+      await pool.query('DELETE FROM ws_connections WHERE connection_id = ANY($1)', [created.connections]);
       await pool.query('DELETE FROM tasks WHERE job_id = ANY($1::uuid[])', [created.jobs]);
       await pool.query('DELETE FROM files WHERE job_id = ANY($1::uuid[])', [created.jobs]);
       await pool.query('DELETE FROM jobs WHERE id = ANY($1::uuid[])', [created.jobs]);
@@ -52,6 +69,7 @@ describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgre
     }
     for (const Key of created.keys) await s3?.send(new DeleteObjectCommand({ Bucket: TEST_BUCKET, Key }));
     await closeDb?.();
+    await apigw?.close();
   });
 
   beforeEach(() => {
@@ -100,8 +118,31 @@ describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgre
     await s3.send(new PutObjectCommand({ Bucket: TEST_BUCKET, Key: key, Body: Buffer.alloc(bytes, 2) }));
   }
 
-  const invoke = (jobId: string) =>
-    handler({ Records: [{ messageId: randomUUID(), body: JSON.stringify({ jobId }) }] } as unknown as SQSEvent, {} as never, () => {});
+  const invoke = (jobId: string, receiveCount = 1) =>
+    handler(
+      {
+        Records: [
+          { messageId: randomUUID(), attributes: { ApproximateReceiveCount: String(receiveCount) }, body: JSON.stringify({ jobId }) },
+        ],
+      } as unknown as SQSEvent,
+      {} as never,
+      () => {},
+    );
+
+  async function subscribe(jobId: string, connectionId: string) {
+    created.connections.push(connectionId);
+    await pool.query('INSERT INTO ws_connections (connection_id, user_id, job_id) VALUES ($1, $2, $3)', [
+      connectionId,
+      randomUUID(),
+      jobId,
+    ]);
+  }
+
+  function pushesTo(connectionId: string) {
+    return apigw.requests
+      .filter((r) => decodeURIComponent(r.url).endsWith(`/@connections/${connectionId}`))
+      .map((r) => JSON.parse(r.body) as Record<string, unknown>);
+  }
 
   const row = async (table: 'jobs' | 'files' | 'tasks', id: string) =>
     (await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id])).rows[0];
@@ -208,5 +249,87 @@ describe.skipIf(!process.env.INTEGRATION)('watchdog worker (integration: Postgre
 
     expect((await row('files', late.fileId)).status).toBe('pending');
     expect((await row('tasks', taskId)).status).toBe('pending');
+  });
+  it('never promotes a stored object whose size does not match, and fails its tasks with that reason at the deadline', async () => {
+    const jobId = await createJob();
+    const early = await createFile(jobId, { deadlineInMs: 3_600_000, name: 'big.pdf', size: 32 });
+    await upload(early.s3Key, 40);
+    const earlyTask = await createTask(jobId, early.fileId);
+
+    await invoke(jobId);
+
+    const mismatch = 'SIZE_MISMATCH {"fileName":"big.pdf","declaredSize":32,"actualSize":40}';
+    let file = await row('files', early.fileId);
+    expect(file.status).toBe('pending');
+    expect(file.verification_error).toBe(mismatch);
+    expect((await row('tasks', earlyTask)).status).toBe('pending');
+    expect(await drainMatching(sqs, taskQueueUrl, (b) => b.taskId === earlyTask, 1, 1500)).toHaveLength(0);
+
+    // Deadline passes with the bad bytes still in storage.
+    await pool.query(`UPDATE files SET staging_deadline_at = now() - interval '1 second' WHERE id = $1`, [early.fileId]);
+    await invoke(jobId);
+
+    file = await row('files', early.fileId);
+    expect(file.status).toBe('expired');
+    const failed = await row('tasks', earlyTask);
+    expect(failed.status).toBe('failed');
+    expect(failed.failure_reason).toBe(mismatch);
+  });
+
+  it('copies files.verification_error into failure_reason when the rejected file is gone at the deadline', async () => {
+    const jobId = await createJob();
+    const file = await createFile(jobId, { deadlineInMs: -1_000, name: 'scan.pdf' });
+    const reason = 'SIZE_MISMATCH {"fileName":"scan.pdf","declaredSize":32,"actualSize":99}';
+    await pool.query('UPDATE files SET verification_error = $2 WHERE id = $1', [file.fileId, reason]);
+    const taskId = await createTask(jobId, file.fileId);
+
+    await invoke(jobId);
+
+    expect((await row('tasks', taskId)).failure_reason).toBe(reason);
+  });
+
+  it('pushes task_update messages for the tasks it fails, and forgets connections that are gone', async () => {
+    const jobId = await createJob();
+    const live = `live-${randomUUID()}`;
+    const gone = `gone-${randomUUID()}`;
+    await subscribe(jobId, live);
+    await subscribe(jobId, gone);
+    const late = await createFile(jobId, { deadlineInMs: -1_000, name: 'late.pdf' });
+    const taskIds = [await createTask(jobId, late.fileId), await createTask(jobId, late.fileId)];
+
+    await invoke(jobId);
+
+    const reason = 'FILE_NOT_UPLOADED {"fileName":"late.pdf","reason":"deadline"}';
+    const pushes = pushesTo(live);
+    expect(pushes.map((p) => p.taskId).sort()).toEqual([...taskIds].sort());
+    for (const push of pushes) {
+      expect(push).toEqual({
+        type: 'task_update',
+        jobId,
+        taskId: expect.any(String),
+        fileId: late.fileId,
+        fileName: 'late.pdf',
+        attemptCount: 0,
+        status: 'failed',
+        failureReason: reason,
+        counts: { pending: 0, in_progress: 0, completed: 0, failed: 2 },
+      });
+    }
+    const { rows } = await pool.query('SELECT connection_id FROM ws_connections WHERE job_id = $1', [jobId]);
+    expect(rows.map((r) => r.connection_id)).toEqual([live]);
+  });
+
+  it('a redelivered watchdog message re-queues pending tasks stranded on an uploaded file', async () => {
+    const jobId = await createJob();
+    const file = await createFile(jobId, { deadlineInMs: 3_600_000, status: 'uploaded' });
+    const stranded = await createTask(jobId, file.fileId);
+    const running = await createTask(jobId, file.fileId, { status: 'in_progress', attempts: 1 });
+
+    await invoke(jobId, 1);
+    expect(await drainMatching(sqs, taskQueueUrl, (b) => b.taskId === stranded, 1, 1500)).toHaveLength(0);
+
+    await invoke(jobId, 2);
+    const messages = await drainMatching(sqs, taskQueueUrl, (b) => b.taskId === stranded || b.taskId === running, 2, 3000);
+    expect(messages.map((m) => m.taskId)).toEqual([stranded]);
   });
 });

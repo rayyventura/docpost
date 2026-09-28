@@ -6,6 +6,7 @@ import { fakeDb, render, type DbCall } from './test-utils/fake-db.js';
 const mocks = vi.hoisted(() => ({
   s3Send: vi.fn(),
   sqsSend: vi.fn(),
+  pushTaskUpdates: vi.fn(async (_jobId: string, _updates: unknown[]) => {}),
   db: undefined as unknown,
 }));
 
@@ -33,6 +34,7 @@ vi.mock('@aws-sdk/client-sqs', () => ({
 }));
 
 vi.mock('./db.js', () => ({ getDb: async () => mocks.db }));
+vi.mock('./notify.js', () => ({ pushTaskUpdates: mocks.pushTaskUpdates }));
 
 import { handler, processRecord } from './handler.js';
 
@@ -80,6 +82,8 @@ interface Scenario {
   /** The job as re-read after the completion check. */
   jobAfter?: Job | null;
   pendingFiles?: FileRow[];
+  /** Files of the job already 'uploaded' (only looked up on a redelivered watchdog message). */
+  uploadedFiles?: string[];
   /** Keys that exist in S3 (HEAD succeeds). */
   stored?: Record<string, number>;
   promoted?: boolean;
@@ -98,11 +102,19 @@ function setup(s: Scenario = {}) {
       const row = jobSelects === 1 ? job : jobAfter;
       return row ? [row] : [];
     }
-    if (call.op === 'select' && call.tableName === 'files') return s.pendingFiles ?? [];
+    if (call.op === 'select' && call.tableName === 'files') {
+      if (render(call.where).params.includes('uploaded')) return (s.uploadedFiles ?? []).map((id) => ({ id }));
+      return s.pendingFiles ?? [];
+    }
     if (call.op === 'update' && call.tableName === 'files') return call.returning && (s.promoted ?? true) ? [{ id: 'x' }] : [];
     if (call.op === 'select' && call.tableName === 'tasks' && call.join) return s.stuck ?? [];
     if (call.op === 'select' && call.tableName === 'tasks') return (s.pendingTasks ?? []).map((id) => ({ id }));
-    if (call.op === 'update' && call.tableName === 'tasks') return call.returning ? [{ id: 'x' }] : [];
+    if (call.op === 'update' && call.tableName === 'tasks') {
+      if (!call.returning) return [];
+      // Deadline failure returns this file's pending tasks; exhausted-retry failure returns the one task.
+      const params = render(call.where).params;
+      return params.length === 2 ? (s.pendingTasks ?? []).map((id) => ({ id, attemptCount: 0 })) : [{ id: params[0] }];
+    }
     if (call.op === 'update' && call.tableName === 'jobs') return (s.rearmWins ?? true) ? [{ id: job?.id }] : [];
     return [];
   });
@@ -115,13 +127,18 @@ function setup(s: Scenario = {}) {
   return fake.calls;
 }
 
-function watchdogMessage(jobId = 'job-1'): SQSRecord {
-  return { messageId: 'm', body: JSON.stringify({ jobId }) } as unknown as SQSRecord;
+function watchdogMessage(jobId = 'job-1', receiveCount = 1): SQSRecord {
+  return {
+    messageId: 'm',
+    attributes: { ApproximateReceiveCount: String(receiveCount) },
+    body: JSON.stringify({ jobId }),
+  } as unknown as SQSRecord;
 }
 
 const updates = (calls: DbCall[], table: string) => calls.filter((c) => c.op === 'update' && c.tableName === table);
 const batchSends = (): { QueueUrl: string; Entries: { Id: string; MessageBody: string }[] }[] =>
   mocks.sqsSend.mock.calls.map(([c]) => c).filter((c) => c.kind === 'batch').map((c) => c.input);
+const pushed = () => mocks.pushTaskUpdates.mock.calls.flatMap(([jobId, list]) => (list as object[]).map((u) => ({ jobId, ...u })));
 const rearmSends = () =>
   mocks.sqsSend.mock.calls.map(([c]) => c).filter((c) => c.kind === 'single').map((c) => c.input);
 
@@ -131,8 +148,10 @@ beforeEach(() => {
   vi.stubEnv('JOB_QUEUE_URL', JOB_QUEUE);
   vi.stubEnv('MAX_RECEIVE_COUNT', '3');
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   mocks.s3Send.mockReset();
   mocks.sqsSend.mockReset().mockResolvedValue({});
+  mocks.pushTaskUpdates.mockClear();
 });
 
 afterEach(() => {
@@ -214,7 +233,7 @@ describe('watchdog: staging deadline', () => {
     const fileUpdates = updates(calls, 'files').map((u) => ({ id: render(u.where).params[0], values: u.values }));
     expect(fileUpdates).toEqual([
       { id: 'file-late', values: { status: 'expired' } },
-      { id: 'file-stored', values: { status: 'uploaded', uploadedAt: expect.any(Date) } },
+      { id: 'file-stored', values: { status: 'uploaded', uploadedAt: expect.any(Date), verificationError: null } },
     ]);
     expect(updates(calls, 'tasks').map((u) => render(u.where).params[0])).toEqual(['file-late']);
   });
@@ -318,31 +337,170 @@ describe('watchdog: completion and re-arm', () => {
   });
 });
 
-describe('watchdog: known gaps (see report)', () => {
-  // BUG: fan-out rejected these bytes (SIZE_MISMATCH written to files.verification_error, file left
-  // pending). The watchdog only HEADs for existence, so it promotes the bad upload and enqueues
-  // delivery, bypassing the size verification (blueprint: "a mismatch is permanent").
-  it.fails('does not promote a stored file whose size does not match / that failed verification', async () => {
-    const f = fileRow('file-1', {
-      stagingDeadlineAt: new Date(Date.now() + HOUR),
-      verificationError: 'SIZE_MISMATCH {"fileName":"file-1.pdf","declaredSize":2048,"actualSize":4096}',
-    });
+describe('watchdog: size verification (same check as fan-out)', () => {
+  const MISMATCH = 'SIZE_MISMATCH {"fileName":"file-1.pdf","declaredSize":2048,"actualSize":4096}';
+
+  it('does not promote a stored file that failed verification', async () => {
+    const f = fileRow('file-1', { stagingDeadlineAt: new Date(Date.now() + HOUR), verificationError: MISMATCH });
     const calls = setup({ pendingFiles: [f], stored: { [f.s3Key]: 4096 }, pendingTasks: ['task-1'] });
 
     await processRecord(watchdogMessage());
 
-    expect(updates(calls, 'files').some((u) => u.values?.status === 'uploaded')).toBe(false);
+    // Already recorded by fan-out: nothing to write, nothing promoted, nothing enqueued, nothing failed yet.
+    expect(updates(calls, 'files')).toHaveLength(0);
+    expect(updates(calls, 'tasks')).toHaveLength(0);
     expect(batchSends()).toHaveLength(0);
+    expect(rearmSends()).toHaveLength(1);
   });
 
-  // BUG: blueprint says that at the deadline the watchdog copies files.verification_error into each
-  // task's failure_reason. It always writes FILE_NOT_UPLOADED {reason:'deadline'} instead.
-  it.fails('fails tasks with the verification error text when the file was rejected', async () => {
-    const f = fileRow('file-1', { verificationError: 'SIZE_MISMATCH {"declaredSize":2048,"actualSize":4096}' });
-    const calls = setup({ pendingFiles: [f] });
+  it('records SIZE_MISMATCH itself when fan-out never saw the upload, and still does not promote', async () => {
+    const f = fileRow('file-1', { stagingDeadlineAt: new Date(Date.now() + HOUR) });
+    const calls = setup({ pendingFiles: [f], stored: { [f.s3Key]: 4096 }, pendingTasks: ['task-1'] });
 
     await processRecord(watchdogMessage());
 
-    expect(String(updates(calls, 'tasks')[0].values?.failureReason)).toContain('SIZE_MISMATCH');
+    const fileUpdates = updates(calls, 'files');
+    expect(fileUpdates.map((u) => u.values)).toEqual([{ verificationError: MISMATCH }]);
+    expect(render(fileUpdates[0].where).params).toEqual(['file-1', 'pending']);
+    expect(batchSends()).toHaveLength(0);
+  });
+
+  it('promotes a stored file whose size now matches and clears the earlier verification error', async () => {
+    const f = fileRow('file-1', { stagingDeadlineAt: new Date(Date.now() + HOUR), verificationError: MISMATCH });
+    const calls = setup({ pendingFiles: [f], stored: { [f.s3Key]: 2048 }, pendingTasks: ['task-1'] });
+
+    await processRecord(watchdogMessage());
+
+    expect(updates(calls, 'files').map((u) => u.values)).toEqual([
+      { status: 'uploaded', uploadedAt: expect.any(Date), verificationError: null },
+    ]);
+    expect(batchSends().flatMap((b) => b.Entries.map((e) => JSON.parse(e.MessageBody).taskId))).toEqual(['task-1']);
+  });
+});
+
+describe('watchdog: failure reason at the deadline', () => {
+  it('fails tasks with the verification error text when the file was rejected', async () => {
+    const reason = 'SIZE_MISMATCH {"fileName":"file-1.pdf","declaredSize":2048,"actualSize":4096}';
+    const f = fileRow('file-1', { verificationError: reason });
+    const calls = setup({ pendingFiles: [f], pendingTasks: ['task-1'] });
+
+    await processRecord(watchdogMessage());
+
+    expect(updates(calls, 'files').map((u) => u.values)).toEqual([{ status: 'expired' }]);
+    const [failTasks] = updates(calls, 'tasks');
+    expect(failTasks.values).toEqual({ status: 'failed', failureReason: reason, updatedAt: expect.any(Date) });
+    expect(render(failTasks.where).params).toEqual(['file-1', 'pending']);
+  });
+
+  it('a mismatched object still in storage at the deadline expires the file with the mismatch reason', async () => {
+    const f = fileRow('file-1');
+    const calls = setup({ pendingFiles: [f], stored: { [f.s3Key]: 10 }, pendingTasks: ['task-1'] });
+
+    await processRecord(watchdogMessage());
+
+    const reason = 'SIZE_MISMATCH {"fileName":"file-1.pdf","declaredSize":2048,"actualSize":10}';
+    expect(updates(calls, 'files').map((u) => u.values)).toEqual([{ verificationError: reason }, { status: 'expired' }]);
+    expect(updates(calls, 'tasks')[0].values?.failureReason).toBe(reason);
+    expect(batchSends()).toHaveLength(0);
+  });
+
+  it('falls back to FILE_NOT_UPLOADED when there is no verification error', async () => {
+    const calls = setup({ pendingFiles: [fileRow('file-1')] });
+    await processRecord(watchdogMessage());
+    expect(updates(calls, 'tasks')[0].values?.failureReason).toBe(
+      'FILE_NOT_UPLOADED {"fileName":"file-1.pdf","reason":"deadline"}',
+    );
+  });
+});
+
+describe('watchdog: live task_update pushes', () => {
+  it('pushes a failed task_update for every task failed at the deadline', async () => {
+    setup({ pendingFiles: [fileRow('file-late')], pendingTasks: ['task-a', 'task-b'] });
+
+    await processRecord(watchdogMessage());
+
+    const reason = 'FILE_NOT_UPLOADED {"fileName":"file-late.pdf","reason":"deadline"}';
+    expect(pushed()).toEqual(
+      ['task-a', 'task-b'].map((taskId) => ({
+        jobId: 'job-1',
+        taskId,
+        fileId: 'file-late',
+        fileName: 'file-late.pdf',
+        attemptCount: 0,
+        status: 'failed',
+        failureReason: reason,
+      })),
+    );
+  });
+
+  it('pushes a failed task_update for tasks failed with RETRIES_EXHAUSTED', async () => {
+    setup({ stuck: [{ id: 'task-stuck', attemptCount: 3, fileName: 'protocol.pdf', fileId: 'file-9' } as never] });
+
+    await processRecord(watchdogMessage());
+
+    expect(pushed()).toEqual([
+      {
+        jobId: 'job-1',
+        taskId: 'task-stuck',
+        fileId: 'file-9',
+        fileName: 'protocol.pdf',
+        attemptCount: 3,
+        status: 'failed',
+        failureReason: expect.stringMatching(/^RETRIES_EXHAUSTED /),
+      },
+    ]);
+  });
+
+  it('pushes nothing when no task changed status', async () => {
+    const f = fileRow('file-1', { stagingDeadlineAt: new Date(Date.now() + HOUR) });
+    setup({ pendingFiles: [f], stored: { [f.s3Key]: 2048 }, pendingTasks: ['task-1'] });
+    await processRecord(watchdogMessage());
+    expect(pushed()).toEqual([]);
+  });
+
+  it('pushes before the completion check and re-arm', async () => {
+    const calls = setup({ pendingFiles: [fileRow('file-late')], pendingTasks: ['task-a'] });
+    let callsAtPush = -1;
+    mocks.pushTaskUpdates.mockImplementationOnce(async () => {
+      callsAtPush = calls.length;
+    });
+    await processRecord(watchdogMessage());
+    expect(calls.slice(callsAtPush).some((c) => c.op === 'execute')).toBe(true);
+  });
+});
+
+describe('watchdog: recovering tasks stranded on uploaded files', () => {
+  it('on a redelivered message, re-enqueues pending tasks of the job\'s uploaded files', async () => {
+    const calls = setup({ uploadedFiles: ['file-up'], pendingTasks: ['task-1', 'task-2'] });
+
+    await processRecord(watchdogMessage('job-1', 2));
+
+    const uploadedQuery = calls.find((c) => c.op === 'select' && c.tableName === 'files' && render(c.where).params.includes('uploaded'))!;
+    expect(render(uploadedQuery.where).params).toEqual(['job-1', 'uploaded']);
+    const taskQuery = calls.find((c) => c.op === 'select' && c.tableName === 'tasks' && !c.join)!;
+    expect(render(taskQuery.where)).toMatchObject({
+      sql: '("tasks"."file_id" in ($1) and "tasks"."status" = $2)',
+      params: ['file-up', 'pending'],
+    });
+    expect(batchSends().flatMap((b) => b.Entries.map((e) => JSON.parse(e.MessageBody).taskId))).toEqual(['task-1', 'task-2']);
+  });
+
+  it('does not look at uploaded files on a first delivery', async () => {
+    const calls = setup({ uploadedFiles: ['file-up'], pendingTasks: ['task-1'] });
+    await processRecord(watchdogMessage('job-1', 1));
+    expect(calls.some((c) => c.op === 'select' && c.tableName === 'files' && render(c.where).params.includes('uploaded'))).toBe(false);
+    expect(batchSends()).toHaveLength(0);
+  });
+
+  it('throws (so the message is redelivered) when SendMessageBatch keeps reporting failed entries', async () => {
+    const f = fileRow('file-1', { stagingDeadlineAt: new Date(Date.now() + HOUR) });
+    setup({ pendingFiles: [f], stored: { [f.s3Key]: 2048 }, pendingTasks: ['task-1', 'task-2'] });
+    mocks.sqsSend.mockImplementation(async (cmd: { kind: string; input: { Entries?: { Id: string }[] } }) =>
+      cmd.kind === 'batch' ? { Failed: [{ Id: cmd.input.Entries!.at(-1)!.Id, Code: 'InternalError' }] } : {},
+    );
+
+    await expect(processRecord(watchdogMessage())).rejects.toThrow(/unsent after 3 attempts/);
+    expect(batchSends().map((b) => b.Entries.length)).toEqual([2, 1, 1]);
+    expect(rearmSends()).toHaveLength(0);
   });
 });

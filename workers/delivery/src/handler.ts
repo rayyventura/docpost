@@ -110,6 +110,69 @@ async function getServiceToken(): Promise<string> {
   return accessToken;
 }
 
+function invalidateServiceToken(): void {
+  cachedToken = null;
+  cachedTokenExp = 0;
+}
+
+// ---------- Platform ingest ----------
+
+const PLATFORM_TIMEOUT_MS = 55_000;
+
+async function postDocument(token: string, ingestBody: Record<string, unknown>): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PLATFORM_TIMEOUT_MS);
+  try {
+    return await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(ingestBody),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 4xx the platform will keep returning however often we retry. 401 is handled before this. */
+function isTerminalClientError(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+const MAX_PLATFORM_MESSAGE_LENGTH = 180;
+
+/** Keeps a platform error message readable and free of credentials or signed links. */
+function sanitizePlatformMessage(message: string): string {
+  return message
+    .replace(/https?:\/\/\S+/gi, '[link removed]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]*/g, '[redacted]')
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_PLATFORM_MESSAGE_LENGTH);
+}
+
+/** Reads the platform's `{error: {code, message}}` shape, falling back to the raw text. */
+async function readPlatformError(res: Response): Promise<{ code?: string; message?: string }> {
+  const text = await res.text().catch(() => '');
+  let code: string | undefined;
+  let message: string | undefined;
+  try {
+    const body = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } } | null;
+    if (typeof body?.error?.code === 'string') code = body.error.code;
+    if (typeof body?.error?.message === 'string') message = body.error.message;
+  } catch {
+    message = text;
+  }
+  const safeCode = code && /^[A-Z0-9_]{1,64}$/.test(code) ? code : undefined;
+  const safeMessage = message ? sanitizePlatformMessage(message) : '';
+  return { code: safeCode, ...(safeMessage ? { message: safeMessage } : {}) };
+}
+
 // ---------- Core processing ----------
 
 export async function processRecord(record: SQSRecord): Promise<void> {
@@ -187,86 +250,94 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       return;
     }
 
-    const token = await getServiceToken();
     const ingestBody = documentIngestBody(file, claimed);
+    let res = await postDocument(await getServiceToken(), ingestBody);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55_000);
-
-    try {
-      const res = await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(ingestBody),
-        signal: controller.signal,
-      });
-
-      if (res.status === 201 || res.status === 200) {
-        const body = (await res.json()) as { documentId: string };
-        await db
-          .update(tasks)
-          .set({
-            status: 'completed',
-            platformDocumentId: body.documentId,
-            updatedAt: new Date(),
-          })
-          .where(eq(tasks.id, claimed.id));
-
-        console.log(`Task ${taskId} completed, document ${body.documentId}`);
-        await pushTaskUpdate({
-          jobId: claimed.jobId,
-          taskId: claimed.id,
-          fileId: claimed.fileId,
-          fileName,
-          attemptCount: claimed.attemptCount,
-          status: 'completed',
-        });
-        await maybeCompleteJob(db, claimed.jobId);
-        return;
-      }
-
-      if (res.status === 404) {
-        await failTask(
-          db,
-          claimed,
-          failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
-        );
-        return;
-      }
-
-      if (res.status === 403) {
-        await failTask(
-          db,
-          claimed,
-          failureReason('NOT_AUTHORIZED_AT_DELIVERY', { fileName: file.originalName }),
-        );
-        return;
-      }
-
-      if (res.status === 422) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: { code?: string; message?: string };
-        } | null;
-        const code = body?.error?.code === 'CHECKSUM_MISMATCH' ? 'CHECKSUM_MISMATCH' : 'INVALID_DESTINATION';
-        await failTask(
-          db,
-          claimed,
-          failureReason(code, {
-            fileName: file.originalName,
-            ...(body?.error?.message ? { reason: body.error.message } : {}),
-          }),
-        );
-        return;
-      }
-
-      const errorBody = await res.text().catch(() => '');
-      throw new Error(`Platform returned ${res.status}: ${errorBody}`);
-    } finally {
-      clearTimeout(timer);
+    if (res.status === 401) {
+      // The cached service token was rejected (rotated keys, revoked, clock skew). Drop it and
+      // retry exactly once with a fresh one; a second 401 is terminal like any other 4xx.
+      await res.body?.cancel().catch(() => {});
+      invalidateServiceToken();
+      res = await postDocument(await getServiceToken(), ingestBody);
     }
+
+    if (res.status === 201 || res.status === 200) {
+      const body = (await res.json()) as { documentId: string };
+      await db
+        .update(tasks)
+        .set({
+          status: 'completed',
+          platformDocumentId: body.documentId,
+          updatedAt: new Date(),
+        })
+        .where(eq(tasks.id, claimed.id));
+
+      console.log(`Task ${taskId} completed, document ${body.documentId}`);
+      await pushTaskUpdate({
+        jobId: claimed.jobId,
+        taskId: claimed.id,
+        fileId: claimed.fileId,
+        fileName,
+        attemptCount: claimed.attemptCount,
+        status: 'completed',
+      });
+      await maybeCompleteJob(db, claimed.jobId);
+      return;
+    }
+
+    if (res.status === 404) {
+      await failTask(
+        db,
+        claimed,
+        failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
+      );
+      return;
+    }
+
+    if (res.status === 403) {
+      await failTask(
+        db,
+        claimed,
+        failureReason('NOT_AUTHORIZED_AT_DELIVERY', { fileName: file.originalName }),
+      );
+      return;
+    }
+
+    if (res.status === 422) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: { code?: string; message?: string };
+      } | null;
+      const code = body?.error?.code === 'CHECKSUM_MISMATCH' ? 'CHECKSUM_MISMATCH' : 'INVALID_DESTINATION';
+      await failTask(
+        db,
+        claimed,
+        failureReason(code, {
+          fileName: file.originalName,
+          ...(body?.error?.message ? { reason: body.error.message } : {}),
+        }),
+      );
+      return;
+    }
+
+    if (isTerminalClientError(res.status)) {
+      // Any other 4xx is a rejection retrying will not fix: stop and tell the user why.
+      const platformError = await readPlatformError(res);
+      await failTask(
+        db,
+        claimed,
+        failureReason('DELIVERY_REJECTED', {
+          fileName: file.originalName,
+          status: String(res.status),
+          ...(platformError.code ? { code: platformError.code } : {}),
+          ...(platformError.message ? { reason: platformError.message } : {}),
+        }),
+      );
+      return;
+    }
+
+    // 5xx, 408 and 429: transient, let SQS redeliver.
+    const errorBody = await res.text().catch(() => '');
+    throw new Error(`Platform returned ${res.status}: ${errorBody}`);
   } catch (err) {
     if (isLastAttempt(record, claimed.attemptCount)) {
       await failTask(

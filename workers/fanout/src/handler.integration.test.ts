@@ -99,12 +99,13 @@ describe.skipIf(!process.env.INTEGRATION)('fanout worker (integration: Postgres 
   }
 
   /** The SQS message S3 delivers to the upload-events queue (key is URL-encoded, spaces as +). */
-  function uploadEvent(key: string): SQSEvent {
+  function uploadEvent(key: string, receiveCount = 1): SQSEvent {
     const encoded = encodeURIComponent(key).replace(/%2F/g, '/').replace(/%20/g, '+');
     return {
       Records: [
         {
           messageId: randomUUID(),
+          attributes: { ApproximateReceiveCount: String(receiveCount) },
           body: JSON.stringify({
             Records: [{ eventSource: 'aws:s3', eventName: 'ObjectCreated:Post', s3: { bucket: { name: TEST_BUCKET }, object: { key: encoded } } }],
           }),
@@ -148,7 +149,7 @@ describe.skipIf(!process.env.INTEGRATION)('fanout worker (integration: Postgres 
     expect(Object.fromEntries(rows.map((r) => [r.status, r.n]))).toEqual({ pending: 12, failed: 1 });
   });
 
-  it('a redelivered upload event does not enqueue the tasks twice', async () => {
+  it('a duplicate S3 notification (first delivery) does not enqueue the tasks twice', async () => {
     const seeded = await seed({ pendingTasks: 2 });
     await upload(seeded.s3Key, 64);
 
@@ -159,6 +160,37 @@ describe.skipIf(!process.env.INTEGRATION)('fanout worker (integration: Postgres 
     expect(messages).toHaveLength(2);
     // ...and no duplicates show up afterwards.
     expect(await taskMessages(seeded.pendingTaskIds, 1, 1500)).toHaveLength(0);
+  });
+
+  it('a redelivered event (earlier attempt promoted, then failed to send) re-queues only still-pending tasks', async () => {
+    const seeded = await seed({ pendingTasks: 3 });
+    await upload(seeded.s3Key, 64);
+    // State left behind by the crashed attempt: promoted, and one task already picked up by delivery.
+    await pool.query(`UPDATE files SET status = 'uploaded', uploaded_at = now() WHERE id = $1`, [seeded.fileId]);
+    const [claimed, ...stillPending] = seeded.pendingTaskIds;
+    await pool.query(`UPDATE tasks SET status = 'in_progress', attempt_count = 1 WHERE id = $1`, [claimed]);
+
+    await invoke(uploadEvent(seeded.s3Key, 2));
+
+    const messages = await taskMessages(stillPending, 2, 8000);
+    expect(messages.map((m) => m.taskId).sort()).toEqual([...stillPending].sort());
+    expect(await taskMessages([claimed, seeded.failedTaskId], 1, 1500)).toHaveLength(0);
+    expect((await fileRow(seeded.fileId)).status).toBe('uploaded');
+  });
+
+  it('clears an earlier SIZE_MISMATCH once a correct upload is verified', async () => {
+    const seeded = await seed({ declaredSize: 64 });
+    await upload(seeded.s3Key, 65);
+    await invoke(uploadEvent(seeded.s3Key));
+    expect((await fileRow(seeded.fileId)).verification_error).toMatch(/^SIZE_MISMATCH /);
+
+    await upload(seeded.s3Key, 64);
+    await invoke(uploadEvent(seeded.s3Key));
+
+    const file = await fileRow(seeded.fileId);
+    expect(file.status).toBe('uploaded');
+    expect(file.verification_error).toBeNull();
+    expect(await taskMessages(seeded.pendingTaskIds, 2, 8000)).toHaveLength(2);
   });
 
   it('does nothing while the object is not in storage yet', async () => {

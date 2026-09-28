@@ -27,6 +27,8 @@ async function poll(): Promise<void> {
           QueueUrl: QUEUE_URL,
           MaxNumberOfMessages: 10,
           WaitTimeSeconds: 20,
+          // Lets the handler tell a redelivery (earlier attempt failed) from a first delivery.
+          MessageSystemAttributeNames: ['ApproximateReceiveCount'],
         }),
       );
 
@@ -38,6 +40,7 @@ async function poll(): Promise<void> {
             body: msg.Body!,
             messageId: msg.MessageId!,
             receiptHandle: msg.ReceiptHandle!,
+            attributes: msg.Attributes ?? {},
           } as SQSRecord);
 
           await sqs.send(

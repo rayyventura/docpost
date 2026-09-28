@@ -340,9 +340,92 @@ describe('delivery processRecord: non-retryable failures', () => {
 
     await expect(processRecord(record('task-1', 1))).resolves.toBeUndefined();
 
+    expect(platformCalls()).toHaveLength(1);
     expect(statusWrites(calls).map((c) => c.values)).toEqual([
       expect.objectContaining({ status: 'failed', failureReason: reason }),
     ]);
+    expect(mocks.pushTaskUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'failed', failureReason: reason }));
+  });
+});
+
+describe('delivery processRecord: other platform 4xx are terminal and explain why', () => {
+  it.each([
+    [
+      400,
+      { error: { code: 'VALIDATION_ERROR', message: 'binderId must be a UUID' } },
+      'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"400","code":"VALIDATION_ERROR","reason":"binderId must be a UUID"}',
+    ],
+    [
+      409,
+      { error: { code: 'CONFLICT', message: 'a document with this name already exists in the folder' } },
+      'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"409","code":"CONFLICT","reason":"a document with this name already exists in the folder"}',
+    ],
+    [413, 'Request Entity Too Large', 'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"413","reason":"Request Entity Too Large"}'],
+    [410, '', 'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"410"}'],
+    [400, { unexpected: true }, 'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"400"}'],
+  ])('platform %i fails the task on the first attempt with the platform error', async (status, body, reason) => {
+    const calls = setupDb();
+    platformReply = () =>
+      typeof body === 'string' ? new Response(body, { status }) : Response.json(body, { status });
+
+    await expect(processRecord(record('task-1', 1))).resolves.toBeUndefined();
+
+    expect(platformCalls()).toHaveLength(1);
+    expect(statusWrites(calls).map((c) => c.values)).toEqual([
+      expect.objectContaining({ status: 'failed', failureReason: reason }),
+    ]);
+    // The dashboard gets the same reason live.
+    expect(mocks.pushTaskUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ jobId: 'job-1', taskId: 'task-1', status: 'failed', failureReason: reason }),
+    );
+    expect(calls.some((c) => c.op === 'execute')).toBe(true);
+  });
+
+  it('a second 401 after refreshing the service token is terminal', async () => {
+    const calls = setupDb();
+    platformReply = () => Response.json({ error: { code: 'UNAUTHORIZED', message: 'invalid service token' } }, { status: 401 });
+
+    await expect(processRecord(record('task-1', 1))).resolves.toBeUndefined();
+
+    expect(platformCalls()).toHaveLength(2);
+    expect(authCalls()).toHaveLength(2);
+    const reason = 'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"401","code":"UNAUTHORIZED","reason":"invalid service token"}';
+    expect(statusWrites(calls).map((c) => c.values)).toEqual([
+      expect.objectContaining({ status: 'failed', failureReason: reason }),
+    ]);
+    expect(mocks.pushTaskUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'failed', failureReason: reason }));
+  });
+
+  it('never copies tokens or signed links from the platform error into failure_reason', async () => {
+    const calls = setupDb();
+    platformReply = () =>
+      Response.json(
+        {
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: `bad source https://bucket.s3.amazonaws.com/k?X-Amz-Signature=abc for Bearer ${TOKEN} {x} ${'y'.repeat(400)}`,
+          },
+        },
+        { status: 400 },
+      );
+
+    await processRecord(record());
+
+    const reason = String(statusWrites(calls)[0].values?.failureReason);
+    const values = JSON.parse(reason.replace(/^DELIVERY_REJECTED /, ''));
+    expect(values.reason).toMatch(/^bad source \[link removed\] for Bearer \[redacted\] x y+$/);
+    expect(values.reason.length).toBeLessThanOrEqual(180);
+    expect(reason).not.toContain('X-Amz-Signature');
+    expect(reason).not.toContain(TOKEN.split('.')[1]);
+  });
+
+  it('drops a platform error code that is not a plain identifier', async () => {
+    const calls = setupDb();
+    platformReply = () => Response.json({ error: { code: '<script>', message: 'nope' } }, { status: 400 });
+    await processRecord(record());
+    expect(statusWrites(calls)[0].values?.failureReason).toBe(
+      'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"400","reason":"nope"}',
+    );
   });
 });
 
@@ -374,14 +457,42 @@ describe('delivery processRecord: retryable failures', () => {
     expect(statusWrites(calls)).toHaveLength(0);
   });
 
-  // Current behavior: 4xx codes outside the platform contract (403/404/422) take the generic
-  // retry path. See report: a 400 is retried until attempts are exhausted.
-  it('other 4xx statuses (e.g. 400) take the retry path', async () => {
-    setupDb();
-    platformReply = () => new Response('bad', { status: 400 });
-    await expect(processRecord(record('task-1', 1))).rejects.toThrow('Platform returned 400');
+  it.each([408, 429])('platform %i (timeout / throttled) is retryable', async (status) => {
+    const calls = setupDb();
+    platformReply = () => Response.json({ error: { code: 'TOO_MANY_REQUESTS', message: 'slow down' } }, { status });
+
+    await expect(processRecord(record('task-1', 1))).rejects.toThrow(`Platform returned ${status}`);
+
+    expect(platformCalls()).toHaveLength(1);
+    expect(statusWrites(calls)).toHaveLength(0);
   });
 
+  it('platform 401 drops the cached service token and retries once with a fresh one', async () => {
+    const calls = setupDb();
+    const fresh = jwt({ sub: 'delivery-worker', exp: Math.floor(Date.now() / 1000) + 900, jti: 'fresh' });
+    // Warm the cache with TOKEN.
+    await processRecord(record());
+    expect(authCalls()).toHaveLength(1);
+
+    authReply = () => Response.json({ accessToken: fresh });
+    let platformHits = 0;
+    platformReply = (init) => {
+      platformHits += 1;
+      const auth = (init.headers as Record<string, string>).Authorization;
+      if (platformHits === 1) {
+        expect(auth).toBe(`Bearer ${TOKEN}`);
+        return Response.json({ error: { code: 'UNAUTHORIZED', message: 'token expired' } }, { status: 401 });
+      }
+      expect(auth).toBe(`Bearer ${fresh}`);
+      return Response.json({ documentId: 'doc-after-refresh' }, { status: 201 });
+    };
+
+    await expect(processRecord(record())).resolves.toBeUndefined();
+
+    expect(platformHits).toBe(2);
+    expect(authCalls()).toHaveLength(2);
+    expect(statusWrites(calls).at(-1)?.values).toMatchObject({ status: 'completed', platformDocumentId: 'doc-after-refresh' });
+  });
   it('aborts the platform request after 55s and treats the timeout as retryable', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const calls = setupDb();

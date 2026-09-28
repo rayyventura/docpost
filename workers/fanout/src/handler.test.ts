@@ -74,6 +74,7 @@ function setupDb({ file = fileRow(), promoted = true, pendingTaskIds = ['task-1'
 function s3Event(...keys: string[]): SQSRecord {
   return {
     messageId: 'm-1',
+    attributes: { ApproximateReceiveCount: '1' },
     body: JSON.stringify({ Records: keys.map((key) => ({ eventName: 'ObjectCreated:Post', s3: { object: { key } } })) }),
   } as unknown as SQSRecord;
 }
@@ -110,7 +111,7 @@ describe('fanout: upload-complete signal', () => {
     expect(mocks.s3Send.mock.calls[0][0].input).toEqual({ Bucket: BUCKET, Key: KEY });
 
     const promote = calls.find((c) => c.op === 'update' && c.tableName === 'files')!;
-    expect(promote.values).toEqual({ status: 'uploaded', uploadedAt: expect.any(Date) });
+    expect(promote.values).toEqual({ status: 'uploaded', uploadedAt: expect.any(Date), verificationError: null });
     expect(promote.returning).toBe(true);
     expect(render(promote.where)).toMatchObject({
       sql: '("files"."id" = $1 and "files"."status" = $2)',
@@ -190,7 +191,7 @@ describe('fanout: nothing is enqueued unless the file is really uploaded', () =>
     expect(mocks.sqsSend).not.toHaveBeenCalled();
   });
 
-  it.each(['uploaded', 'expired'] as const)('skips files already %s', async (status) => {
+  it.each(['uploaded', 'expired'] as const)('skips files already %s on a first delivery of the event', async (status) => {
     setupDb({ file: fileRow({ status }) });
     await processRecord(s3Event(KEY));
     expect(mocks.s3Send).not.toHaveBeenCalled();
@@ -241,41 +242,106 @@ describe('fanout: nothing is enqueued unless the file is really uploaded', () =>
   });
 });
 
-describe('fanout: known gaps (see report)', () => {
-  // BUG: blueprint data-model note says "A successful promotion clears [verification_error] to NULL".
-  // The promote UPDATE only sets status/uploadedAt, so a stale SIZE_MISMATCH survives a good re-upload.
-  it.fails('clears verification_error when promoting the file', async () => {
+/** The same S3 event handed out again by SQS after an earlier attempt did not ack it. */
+function redelivered(record: SQSRecord, receiveCount = 2): SQSRecord {
+  return { ...record, attributes: { ...record.attributes, ApproximateReceiveCount: String(receiveCount) } };
+}
+
+describe('fanout: promotion clears an earlier rejection', () => {
+  it('clears verification_error when promoting the file', async () => {
     const calls = setupDb({ file: fileRow({ verificationError: 'SIZE_MISMATCH {}' }) });
     await processRecord(s3Event(KEY));
     const promote = calls.find((c) => c.op === 'update' && c.returning)!;
-    expect(promote.values).toHaveProperty('verificationError', null);
-  });
-
-  // BUG: blueprint "Fan out crashes mid batch" says the redelivered upload event re-sends task
-  // messages. But the file was already promoted before the send failed, so the redelivery hits the
-  // `status !== 'pending'` early exit and the tasks are never enqueued (they stay pending forever:
-  // the watchdog only looks at pending *files*).
-  it.fails('re-enqueues pending tasks when the upload event is redelivered after a failed send', async () => {
-    setupDb();
-    mocks.sqsSend.mockRejectedValueOnce(new Error('SQS unavailable'));
-    await expect(processRecord(s3Event(KEY))).rejects.toThrow();
-    mocks.sqsSend.mockClear();
-
-    // Redelivery: the file is now 'uploaded', its tasks are still pending.
-    setupDb({ file: fileRow({ status: 'uploaded', uploadedAt: new Date() }) });
-    await processRecord(s3Event(KEY));
-
+    expect(promote.values).toEqual({ status: 'uploaded', uploadedAt: expect.any(Date), verificationError: null });
+    expect(render(promote.where).params).toEqual(['file-1', 'pending']);
     expect(sentTaskIds()).toEqual(['task-1', 'task-2']);
   });
+});
 
-  // BUG (same family): SendMessageBatch partial failures (`Failed` entries) are ignored, so the
-  // event is acked with some tasks never enqueued.
-  it.fails('does not ack the event when SendMessageBatch reports failed entries', async () => {
+describe('fanout: crash mid batch (blueprint failure table)', () => {
+  it('re-enqueues pending tasks when the upload event is redelivered after a failed send', async () => {
+    setupDb();
+    mocks.sqsSend.mockRejectedValueOnce(new Error('SQS unavailable'));
+    await expect(processRecord(s3Event(KEY))).rejects.toThrow('SQS unavailable');
+    mocks.sqsSend.mockClear();
+    mocks.s3Send.mockClear();
+
+    // Redelivery: the file is now 'uploaded', its tasks are still pending.
+    const calls = setupDb({ file: fileRow({ status: 'uploaded', uploadedAt: new Date() }) });
+    await processRecord(redelivered(s3Event(KEY)));
+
+    expect(sentTaskIds()).toEqual(['task-1', 'task-2']);
+    expect(sentBatches().map((b) => b.QueueUrl)).toEqual([TASK_QUEUE]);
+    // Only still-pending tasks are re-sent; the file is neither re-verified nor re-promoted.
+    const taskQuery = calls.find((c) => c.op === 'select' && c.tableName === 'tasks')!;
+    expect(render(taskQuery.where).params).toEqual(['file-1', 'pending']);
+    expect(mocks.s3Send).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.op === 'update')).toHaveLength(0);
+  });
+
+  it('a redelivered event for an uploaded file with no pending tasks sends nothing', async () => {
+    setupDb({ file: fileRow({ status: 'uploaded', uploadedAt: new Date() }), pendingTaskIds: [] });
+    await processRecord(redelivered(s3Event(KEY)));
+    expect(mocks.sqsSend).not.toHaveBeenCalled();
+  });
+
+  it('a redelivered event never revives an expired file', async () => {
+    setupDb({ file: fileRow({ status: 'expired' }) });
+    await processRecord(redelivered(s3Event(KEY), 3));
+    expect(mocks.s3Send).not.toHaveBeenCalled();
+    expect(mocks.sqsSend).not.toHaveBeenCalled();
+  });
+
+  it('a redelivered event for a still-pending file goes through normal verification and promotion', async () => {
+    const calls = setupDb();
+    await processRecord(redelivered(s3Event(KEY)));
+    expect(mocks.s3Send).toHaveBeenCalledTimes(1);
+    expect(calls.some((c) => c.op === 'update' && c.values?.status === 'uploaded')).toBe(true);
+    expect(sentTaskIds()).toEqual(['task-1', 'task-2']);
+  });
+});
+
+describe('fanout: SendMessageBatch partial failures', () => {
+  it('re-sends only the failed entries and succeeds when the retry gets through', async () => {
+    setupDb({ pendingTaskIds: ['task-1', 'task-2', 'task-3'] });
+    mocks.sqsSend
+      .mockResolvedValueOnce({ Successful: [{ Id: '0' }, { Id: '2' }], Failed: [{ Id: '1', Code: 'InternalError', SenderFault: false }] })
+      .mockResolvedValueOnce({ Successful: [{ Id: '1' }], Failed: [] });
+
+    await expect(processRecord(s3Event(KEY))).resolves.toBeUndefined();
+
+    expect(sentBatches().map((b) => b.Entries)).toEqual([
+      [
+        { Id: '0', MessageBody: JSON.stringify({ taskId: 'task-1' }) },
+        { Id: '1', MessageBody: JSON.stringify({ taskId: 'task-2' }) },
+        { Id: '2', MessageBody: JSON.stringify({ taskId: 'task-3' }) },
+      ],
+      [{ Id: '1', MessageBody: JSON.stringify({ taskId: 'task-2' }) }],
+    ]);
+  });
+
+  it('does not ack the event when SendMessageBatch keeps reporting failed entries', async () => {
     setupDb();
     mocks.sqsSend.mockResolvedValue({
       Successful: [{ Id: '0' }],
       Failed: [{ Id: '1', Code: 'InternalError', SenderFault: false }],
     });
+
+    await expect(processRecord(s3Event(KEY))).rejects.toThrow(/1 task message\(s\) unsent after 3 attempts: 1:InternalError/);
+
+    // Bounded: the first send plus two retries of just the failed entry.
+    expect(sentBatches().map((b) => b.Entries.map((e) => e.Id))).toEqual([['0', '1'], ['1'], ['1']]);
+  });
+
+  it('the redelivery after a partial failure re-sends the tasks that are still pending', async () => {
+    setupDb();
+    mocks.sqsSend.mockResolvedValue({ Successful: [{ Id: '0' }], Failed: [{ Id: '1', Code: 'InternalError' }] });
     await expect(processRecord(s3Event(KEY))).rejects.toThrow();
+
+    mocks.sqsSend.mockReset().mockResolvedValue({ Successful: [], Failed: [] });
+    setupDb({ file: fileRow({ status: 'uploaded', uploadedAt: new Date() }) });
+    await processRecord(redelivered(s3Event(KEY)));
+
+    expect(sentTaskIds()).toEqual(['task-1', 'task-2']);
   });
 });

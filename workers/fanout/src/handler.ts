@@ -1,9 +1,11 @@
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
-import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { SQSClient, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
+import { S3Client } from '@aws-sdk/client-s3';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { eq, and } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks } from './schema.js';
+import { enqueueTasks } from './enqueue.js';
+import { verifyStagedObject } from './verify.js';
 
 let _s3: S3Client | undefined;
 let _sqs: SQSClient | undefined;
@@ -26,6 +28,33 @@ function getSqs() {
     });
   }
   return _sqs;
+}
+
+function taskQueueUrl(): string {
+  return process.env.TASK_QUEUE_URL ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks';
+}
+
+/**
+ * True when SQS is handing this message out again because an earlier attempt did not ack it
+ * (threw, timed out or crashed). A first delivery of a duplicate S3 notification is not one.
+ */
+function isRedelivery(record: SQSRecord): boolean {
+  return Number(record.attributes?.ApproximateReceiveCount ?? 1) > 1;
+}
+
+async function enqueuePendingTasks(db: Awaited<ReturnType<typeof getDb>>, fileId: string): Promise<void> {
+  const pendingTasks = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.fileId, fileId), eq(tasks.status, 'pending')));
+
+  if (pendingTasks.length === 0) {
+    console.log(`No pending tasks for file ${fileId}`);
+    return;
+  }
+
+  await enqueueTasks(getSqs(), taskQueueUrl(), pendingTasks.map((t) => t.id));
+  console.log(`Enqueued ${pendingTasks.length} tasks for file ${fileId}`);
 }
 
 export async function processRecord(record: SQSRecord): Promise<void> {
@@ -58,37 +87,41 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       continue;
     }
 
+    if (file.status === 'uploaded' && isRedelivery(record)) {
+      // An earlier attempt promoted the file but did not finish enqueueing (blueprint: "Fan out
+      // crashes mid batch"). Re-send whatever is still pending; the delivery worker's conditional
+      // claim absorbs any message that did get through the first time.
+      console.log(`File ${file.id} already uploaded; redelivered event, re-enqueueing its pending tasks`);
+      await enqueuePendingTasks(db, file.id);
+      continue;
+    }
+
     if (file.status !== 'pending') {
       console.log(`File ${file.id} already processed (status: ${file.status}), skipping`);
       continue;
     }
 
-    // HEAD the S3 object to verify size
-    let actualSize: number;
-    try {
-      const head = await getS3().send(new HeadObjectCommand({ Bucket: process.env.S3_BUCKET ?? 'docpost-staging-local', Key: s3Key }));
-      actualSize = head.ContentLength ?? 0;
-    } catch (err) {
-      console.error(`Failed to HEAD object ${s3Key}:`, err);
+    // HEAD the S3 object and verify its size matches the declared value
+    const verification = await verifyStagedObject(getS3(), process.env.S3_BUCKET ?? 'docpost-staging-local', file);
+
+    if (verification.status === 'missing') {
+      console.error(`Failed to HEAD object ${s3Key}:`, verification.error);
       continue;
     }
 
-    // Verify size matches declared value
-    const declaredSize = Number(file.sizeBytes);
-    if (actualSize !== declaredSize) {
-      const reason = `SIZE_MISMATCH ${JSON.stringify({ fileName: file.originalName, declaredSize, actualSize })}`;
-      console.log(`File ${file.id}: ${reason}`);
+    if (verification.status === 'rejected') {
+      console.log(`File ${file.id}: ${verification.reason}`);
       await db
         .update(files)
-        .set({ verificationError: reason })
+        .set({ verificationError: verification.reason })
         .where(eq(files.id, file.id));
       continue;
     }
 
-    // Promote file to 'uploaded'
+    // Promote file to 'uploaded' (clearing any earlier rejection of a previous upload)
     const [promoted] = await db
       .update(files)
-      .set({ status: 'uploaded', uploadedAt: new Date() })
+      .set({ status: 'uploaded', uploadedAt: new Date(), verificationError: null })
       .where(and(eq(files.id, file.id), eq(files.status, 'pending')))
       .returning({ id: files.id });
 
@@ -99,32 +132,7 @@ export async function processRecord(record: SQSRecord): Promise<void> {
 
     console.log(`File ${file.id} promoted to uploaded`);
 
-    // Query pending tasks for this file
-    const pendingTasks = await db
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(and(eq(tasks.fileId, file.id), eq(tasks.status, 'pending')));
-
-    if (pendingTasks.length === 0) {
-      console.log(`No pending tasks for file ${file.id}`);
-      continue;
-    }
-
-    // Enqueue tasks in batches of 10 (SQS SendMessageBatch limit)
-    for (let i = 0; i < pendingTasks.length; i += 10) {
-      const batch = pendingTasks.slice(i, i + 10);
-      await getSqs().send(
-        new SendMessageBatchCommand({
-          QueueUrl: process.env.TASK_QUEUE_URL ?? 'http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/docpost-tasks',
-          Entries: batch.map((t, idx) => ({
-            Id: String(idx),
-            MessageBody: JSON.stringify({ taskId: t.id }),
-          })),
-        }),
-      );
-    }
-
-    console.log(`Enqueued ${pendingTasks.length} tasks for file ${file.id}`);
+    await enqueuePendingTasks(db, file.id);
   }
 }
 

@@ -251,6 +251,64 @@ describe.skipIf(!process.env.INTEGRATION)('delivery worker (integration: Postgre
     expect(row.failure_reason).toBe('NOT_AUTHORIZED_AT_DELIVERY {"fileName":"protocol.pdf"}');
   });
 
+  it('platform 400 fails the task immediately with the platform error, and pushes that reason live', async () => {
+    const live = `live-${randomUUID()}`;
+    const { taskIds, jobId } = await seed({ subscribers: [live] });
+    platformReply = (_req, res) =>
+      json(res, 400, { error: { code: 'VALIDATION_ERROR', message: 'binderId must be a UUID' } });
+
+    await expect(invoke(sqsEvent(taskIds[0]))).resolves.toBeUndefined();
+
+    const reason =
+      'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"400","code":"VALIDATION_ERROR","reason":"binderId must be a UUID"}';
+    const row = await task(taskIds[0]);
+    expect(row.status).toBe('failed');
+    expect(row.attempt_count).toBe(1);
+    expect(row.failure_reason).toBe(reason);
+    expect(ingestCallsFor(taskIds[0])).toHaveLength(1);
+    expect((await job(jobId)).completed_at).not.toBeNull();
+    expect(pushesTo(live).at(-1)).toEqual(
+      expect.objectContaining({ type: 'task_update', jobId, taskId: taskIds[0], status: 'failed', failureReason: reason }),
+    );
+  });
+
+  it('platform 401 is retried once with a fresh service token; a second 401 is terminal', async () => {
+    const { taskIds } = await seed({ taskCount: 2 });
+    const [recovers, rejected] = taskIds;
+    const authBefore = auth.requests.length;
+
+    let hits = 0;
+    platformReply = (_req, res) => {
+      hits += 1;
+      if (hits === 1) json(res, 401, { error: { code: 'UNAUTHORIZED', message: 'token expired' } });
+      else json(res, 201, { documentId: randomUUID() });
+    };
+    await invoke(sqsEvent(recovers));
+    expect((await task(recovers)).status).toBe('completed');
+    expect(ingestCallsFor(recovers)).toHaveLength(2);
+    expect(auth.requests.length - authBefore).toBe(1);
+
+    platformReply = (_req, res) => json(res, 401, { error: { code: 'UNAUTHORIZED', message: 'invalid service token' } });
+    await expect(invoke(sqsEvent(rejected))).resolves.toBeUndefined();
+    const row = await task(rejected);
+    expect(row.status).toBe('failed');
+    expect(row.failure_reason).toBe(
+      'DELIVERY_REJECTED {"fileName":"protocol.pdf","status":"401","code":"UNAUTHORIZED","reason":"invalid service token"}',
+    );
+    expect(ingestCallsFor(rejected)).toHaveLength(2);
+  });
+
+  it('platform 429 is retryable (task stays in_progress)', async () => {
+    const { taskIds } = await seed();
+    platformReply = (_req, res) => json(res, 429, { error: { code: 'TOO_MANY_REQUESTS', message: 'slow down' } });
+
+    await expect(invoke(sqsEvent(taskIds[0], 1))).rejects.toThrow(/Platform returned 429/);
+
+    const row = await task(taskIds[0]);
+    expect(row.status).toBe('in_progress');
+    expect(row.failure_reason).toBeNull();
+  });
+
   it('platform 422 CHECKSUM_MISMATCH fails the task immediately', async () => {
     const { taskIds } = await seed();
     platformReply = (_req, res) =>
