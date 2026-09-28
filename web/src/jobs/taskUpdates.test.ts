@@ -71,6 +71,25 @@ describe('mergeFetchedTasks', () => {
       attemptCount: 1,
     });
   });
+
+  it('keeps the send destination when the fetched row has none', () => {
+    const seeded = [task({ taskId: 'pending-job-0', destination: 'Cardiology Trial / Patient Records / Intake Forms' })];
+    const fetched = [
+      task({
+        taskId: 'real-1',
+        status: 'completed',
+        destination: null,
+        teamName: null,
+        binderName: null,
+        folderPath: [],
+      }),
+    ];
+    expect(mergeFetchedTasks(seeded, fetched)[0]).toMatchObject({
+      taskId: 'real-1',
+      status: 'completed',
+      destination: 'Cardiology Trial / Patient Records / Intake Forms',
+    });
+  });
 });
 
 describe('firstTaskIdForStatus', () => {
