@@ -1366,6 +1366,12 @@ body {
 .tree-send-here {
   flex-shrink: 0;
   margin-left: 0.5rem;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.tree-send-here:hover {
+  color: var(--color-text-secondary);
 }
 
 .tree-row--active {

@@ -44,11 +44,37 @@ const mappingSchema = z.object({
 
 const createJobSchema = z.object({
   files: z.array(fileSchema).min(1).max(100),
-  mappings: z.array(mappingSchema).min(1),
-}).refine(
-  (data) => data.mappings.every((m) => m.fileIndex < data.files.length),
-  { message: 'fileIndex out of range' },
-);
+  destinations: z.array(destinationSchema).min(1).max(200).optional(),
+  mappings: z.array(mappingSchema).min(1).optional(),
+}).superRefine((data, ctx) => {
+  if (data.mappings?.length) {
+    if (!data.mappings.every((mapping) => mapping.fileIndex < data.files.length)) {
+      ctx.addIssue({ code: 'custom', message: 'fileIndex out of range' });
+    }
+    return;
+  }
+  if (!data.destinations?.length) {
+    ctx.addIssue({ code: 'custom', message: 'Choose at least one destination' });
+  }
+});
+
+function destKey(destination: { teamId: string; binderId: string; folderId: string }): string {
+  return `${destination.teamId}:${destination.binderId}:${destination.folderId}`;
+}
+
+function uniqueDestinations<T extends { teamId: string; binderId: string; folderId: string }>(
+  destinations: T[],
+): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const destination of destinations) {
+    const key = destKey(destination);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(destination);
+  }
+  return unique;
+}
 
 // ---------- Helpers ----------
 
@@ -66,7 +92,16 @@ router.post('/jobs', requireUserAuth, async (req: Request, res: Response, next: 
       throw new ValidationError(parsed.error.issues[0]?.message ?? 'Invalid request body');
     }
 
-    const { files: fileInputs, mappings } = parsed.data;
+    const { files: fileInputs } = parsed.data;
+    const mappings = parsed.data.mappings?.length
+      ? parsed.data.mappings.map((mapping) => ({
+          ...mapping,
+          destinations: uniqueDestinations(mapping.destinations),
+        }))
+      : fileInputs.map((_, fileIndex) => ({
+          fileIndex,
+          destinations: uniqueDestinations(parsed.data.destinations ?? []),
+        }));
     const userId = req.user!.sub;
 
     // Same teams the user can already browse and download from.
