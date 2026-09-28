@@ -118,7 +118,7 @@ The client needs a tool, that lets a user:
 
 # **Decisions that require architectural decisions**
 
-            [DocPost - Rayane Ventura](https://docs.google.com/document/d/1SDteRJuSXlhbqEv4XGTbCR1sKfI1PgyY51WX1UmIi48/edit?tab=t.rmzplle76p34) \- ADR
+[DocPost - Rayane Ventura](https://docs.google.com/document/d/1SDteRJuSXlhbqEv4XGTbCR1sKfI1PgyY51WX1UmIi48/edit?tab=t.rmzplle76p34) \- ADR
 
 # **Technical Design** 
 
