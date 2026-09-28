@@ -1,7 +1,9 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { Readable } from 'node:stream';
+import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { AppError, NotFoundError } from '@docpost/shared';
 
 const BUCKET = process.env.S3_BUCKET ?? 'docpost-staging-local';
+const DOWNLOAD_EXPIRY = 120;
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -19,19 +21,8 @@ export function documentObjectKey(documentId: string): string {
   return `documents/${documentId}`;
 }
 
-export async function putDocumentObject(
-  documentId: string,
-  body: Buffer,
-  contentType: string,
-): Promise<void> {
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: documentObjectKey(documentId),
-      Body: body,
-      ContentType: contentType,
-    }),
-  );
+export function copySource(bucket: string, key: string): string {
+  return `${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 function isMissingObject(err: unknown): boolean {
@@ -42,20 +33,99 @@ function isMissingObject(err: unknown): boolean {
   return status === 404;
 }
 
-export async function getDocumentObjectStream(documentId: string): Promise<Readable | null> {
+export interface StagingObjectInfo {
+  contentLength: number;
+  checksumSha256Base64?: string;
+  checksumType?: string;
+}
+
+export async function headStagingObject(s3Key: string): Promise<StagingObjectInfo> {
   try {
-    const obj = await s3.send(
-      new GetObjectCommand({
+    const head = await s3.send(
+      new HeadObjectCommand({
         Bucket: BUCKET,
-        Key: documentObjectKey(documentId),
+        Key: s3Key,
+        ChecksumMode: 'ENABLED',
       }),
     );
-    if (!obj.Body) return null;
-    if (obj.Body instanceof Readable) return obj.Body;
-    const web = obj.Body.transformToWebStream();
-    return Readable.fromWeb(web as import('node:stream/web').ReadableStream);
+    return {
+      contentLength: head.ContentLength ?? 0,
+      checksumSha256Base64: head.ChecksumSHA256,
+      checksumType: head.ChecksumType,
+    };
   } catch (err) {
-    if (isMissingObject(err)) return null;
+    if (isMissingObject(err)) {
+      throw new NotFoundError('Source object was not found');
+    }
     throw err;
   }
+}
+
+export async function copyStagingObjectToDocument(
+  sourceKey: string,
+  documentId: string,
+  contentType: string,
+): Promise<void> {
+  try {
+    await s3.send(
+      new CopyObjectCommand({
+        Bucket: BUCKET,
+        CopySource: copySource(BUCKET, sourceKey),
+        Key: documentObjectKey(documentId),
+        ContentType: contentType,
+        MetadataDirective: 'REPLACE',
+      }),
+    );
+  } catch (err) {
+    if (isMissingObject(err)) {
+      throw new NotFoundError('Source object was not found');
+    }
+    throw err;
+  }
+}
+
+export function hexSha256ToBase64(hex: string): string | null {
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex').toString('base64');
+}
+
+export function assertObjectMatchesIngest(
+  info: StagingObjectInfo,
+  sizeBytes: number,
+  checksumSha256: string,
+): void {
+  if (info.contentLength !== sizeBytes) {
+    throw new AppError(
+      'CHECKSUM_MISMATCH',
+      `Declared size does not match. Expected ${sizeBytes}, got ${info.contentLength}`,
+      422,
+    );
+  }
+
+  const declared = hexSha256ToBase64(checksumSha256);
+  if (info.checksumSha256Base64 && info.checksumType === 'FULL_OBJECT' && declared) {
+    if (info.checksumSha256Base64.replace(/"/g, '') !== declared) {
+      throw new AppError(
+        'CHECKSUM_MISMATCH',
+        `Declared checksum does not match. Expected ${checksumSha256}`,
+        422,
+      );
+    }
+  }
+}
+
+export async function presignDocumentDownload(
+  documentId: string,
+  filename: string,
+  contentType: string,
+): Promise<string> {
+  const safe = filename.replace(/["\r\n]/g, '');
+  const encoded = encodeURIComponent(safe);
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: documentObjectKey(documentId),
+    ResponseContentType: contentType,
+    ResponseContentDisposition: `attachment; filename="${safe}"; filename*=UTF-8''${encoded}`,
+  });
+  return getSignedUrl(s3, command, { expiresIn: DOWNLOAD_EXPIRY });
 }

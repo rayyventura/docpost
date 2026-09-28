@@ -294,6 +294,15 @@ resource "aws_iam_policy" "platform_runtime" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
+        ]
+        Resource = [
+          "${module.s3_staging.staging_bucket_arn}/uploads/*",
+          "${module.s3_staging.staging_bucket_arn}/documents/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "s3:PutObject",
         ]
         Resource = "${module.s3_staging.staging_bucket_arn}/documents/*"
@@ -488,7 +497,7 @@ module "lambda_delivery" {
   environment   = var.environment
   function_name = "delivery"
   handler       = "handler.handler"
-  memory_size   = 1024
+  memory_size   = 256
   timeout       = 60
 
   filename         = data.archive_file.lambda_placeholder.output_path

@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { UnauthorizedError, ValidationError } from '@docpost/shared';
 import { getDb } from '../db/index.js';
 import { users } from '../db/schema.js';
-import { signUserToken } from '../crypto/jwt.js';
+import { issueUserSession } from '../refresh.js';
 
 // Pre-computed dummy hash for constant-time comparison when user not found
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 12);
@@ -46,12 +46,9 @@ router.post('/auth/login', async (req: Request, res: Response, next: NextFunctio
       throw new UnauthorizedError('Invalid credentials');
     }
 
-    const accessToken = await signUserToken({ id: user.id, email: user.email, name: user.name });
+    const session = await issueUserSession({ id: user.id, email: user.email, name: user.name });
 
-    res.status(200).json({
-      accessToken,
-      expiresIn: 900,
-    });
+    res.status(200).json(session);
   } catch (err) {
     next(err);
   }

@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream';
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireUserAuth } from '../middleware/auth.js';
 
@@ -123,25 +122,11 @@ router.get(
         return;
       }
 
-      const response = await fetch(`${PLATFORM_URL}/documents/${req.params.id}/download`, {
-        headers: { Authorization: authorization },
-      });
-
-      res.status(response.status);
-      const contentType = response.headers.get('content-type');
-      const disposition = response.headers.get('content-disposition');
-      if (contentType) res.setHeader('Content-Type', contentType);
-      if (disposition) res.setHeader('Content-Disposition', disposition);
-
-      if (!response.ok || !response.body) {
-        const body: unknown = await response.json().catch(() => ({
-          error: { code: 'UPSTREAM_ERROR', message: 'Platform service unavailable' },
-        }));
-        res.json(body);
-        return;
-      }
-
-      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream).pipe(res);
+      const { status, body } = await proxyToPlatform(
+        `/documents/${req.params.id}/download`,
+        authorization,
+      );
+      res.status(status).json(body);
     } catch (err) {
       next(err);
     }

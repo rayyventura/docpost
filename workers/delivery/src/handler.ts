@@ -1,6 +1,6 @@
 import { FOLDER_DESTINATION_REQUIRED } from '@docpost/shared';
 import type { SQSHandler, SQSRecord } from 'aws-lambda';
-import { S3Client, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { files, tasks } from './schema.js';
@@ -37,6 +37,23 @@ function receiveCount(record: SQSRecord): number {
 function isLastAttempt(record: SQSRecord, attemptCount: number): boolean {
   const limit = maxAttempts();
   return receiveCount(record) >= limit || attemptCount >= limit;
+}
+
+export function documentIngestBody(
+  file: { originalName: string; contentType: string; checksumSha256: string; ownerUserId: string; s3Key: string; sizeBytes: bigint | number | string },
+  task: { id: string; binderId: string; folderId: string | null },
+): Record<string, unknown> {
+  return {
+    taskId: task.id,
+    binderId: task.binderId,
+    folderId: task.folderId,
+    name: file.originalName,
+    contentType: file.contentType,
+    checksumSha256: file.checksumSha256,
+    onBehalfOf: file.ownerUserId,
+    s3Key: file.s3Key,
+    sizeBytes: Number(file.sizeBytes),
+  };
 }
 
 function lastErrorReason(err: unknown): string {
@@ -170,34 +187,20 @@ export async function processRecord(record: SQSRecord): Promise<void> {
       return;
     }
 
-    const getResult = await getS3().send(new GetObjectCommand({ Bucket: env('S3_BUCKET', 'docpost-staging-local'), Key: file.s3Key }));
-    const fileBuffer = await getResult.Body!.transformToByteArray();
-
     const token = await getServiceToken();
-
-    const metadata = JSON.stringify({
-      taskId: claimed.id,
-      binderId: claimed.binderId,
-      folderId: claimed.folderId,
-      name: file.originalName,
-      contentType: file.contentType,
-      checksumSha256: file.checksumSha256,
-      onBehalfOf: file.ownerUserId,
-    });
-
-    const formData = new FormData();
-    formData.append('metadata', metadata);
-    const blob = new Blob([Buffer.from(fileBuffer)], { type: file.contentType });
-    formData.append('file', blob, file.originalName);
+    const ingestBody = documentIngestBody(file, claimed);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const timer = setTimeout(() => controller.abort(), 55_000);
 
     try {
       const res = await fetch(`${env('PLATFORM_URL', 'http://localhost:3002')}/documents`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(ingestBody),
         signal: controller.signal,
       });
 
@@ -222,6 +225,15 @@ export async function processRecord(record: SQSRecord): Promise<void> {
           status: 'completed',
         });
         await maybeCompleteJob(db, claimed.jobId);
+        return;
+      }
+
+      if (res.status === 404) {
+        await failTask(
+          db,
+          claimed,
+          failureReason('FILE_NOT_UPLOADED', { fileName: file.originalName, reason: 'missing' }),
+        );
         return;
       }
 
