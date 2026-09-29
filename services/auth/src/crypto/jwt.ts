@@ -2,14 +2,15 @@ import { SignJWT } from 'jose';
 import { getPrivateKey, getKid } from './keys.js';
 
 const ISSUER = 'docpost-auth';
-const TOKEN_EXPIRY = '15m';
+const USER_TOKEN_EXPIRY = '5m';
+const SERVICE_TOKEN_EXPIRY = '15m';
 
 export async function signUserToken(user: { id: string; email: string; name: string }): Promise<string> {
   const token = await new SignJWT({ email: user.email, name: user.name })
     .setProtectedHeader({ alg: 'RS256', kid: getKid() })
     .setSubject(user.id)
     .setIssuedAt()
-    .setExpirationTime(TOKEN_EXPIRY)
+    .setExpirationTime(USER_TOKEN_EXPIRY)
     .setIssuer(ISSUER)
     .sign(getPrivateKey());
 
@@ -27,7 +28,7 @@ export async function signServiceToken(client: {
     .setProtectedHeader({ alg: 'RS256', kid: getKid() })
     .setSubject(client.clientId)
     .setIssuedAt()
-    .setExpirationTime(TOKEN_EXPIRY)
+    .setExpirationTime(SERVICE_TOKEN_EXPIRY)
     .setIssuer(ISSUER)
     .sign(getPrivateKey());
 

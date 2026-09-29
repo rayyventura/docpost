@@ -5,7 +5,7 @@ import { getDb } from './db/index.js';
 import { refreshTokens, users } from './db/schema.js';
 import { signUserToken } from './crypto/jwt.js';
 
-export const ACCESS_TOKEN_TTL_SECONDS = 900;
+export const ACCESS_TOKEN_TTL_SECONDS = 300;
 export const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
 const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_SECONDS * 1000;
 

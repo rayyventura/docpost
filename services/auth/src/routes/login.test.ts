@@ -38,7 +38,7 @@ beforeEach(() => {
 type ErrorBody = { error: { code: string; message: string } };
 
 describe('POST /auth/login', () => {
-  it('returns accessToken, refreshToken, expiresIn 900 and refreshExpiresIn 604800', async () => {
+  it('returns accessToken, refreshToken, expiresIn 300 and refreshExpiresIn 604800', async () => {
     db.queue([user], undefined);
 
     const res = await postJson<Record<string, unknown>>(server.baseUrl, '/auth/login', {
@@ -48,7 +48,7 @@ describe('POST /auth/login', () => {
 
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(['accessToken', 'expiresIn', 'refreshExpiresIn', 'refreshToken']);
-    expect(res.body.expiresIn).toBe(900);
+    expect(res.body.expiresIn).toBe(300);
     expect(res.body.refreshExpiresIn).toBe(604800);
 
     const { payload } = await jwtVerify(res.body.accessToken as string, getPublicKey(), { issuer: 'docpost-auth' });

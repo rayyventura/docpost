@@ -21,10 +21,10 @@ describe('signUserToken', () => {
     expect(payload).not.toHaveProperty('token_use');
   });
 
-  it('expires 15 minutes after issue', async () => {
+  it('expires 5 minutes after issue', async () => {
     const token = await signUserToken(user);
     const { payload } = await jwtVerify(token, getPublicKey());
-    expect(payload.exp! - payload.iat!).toBe(900);
+    expect(payload.exp! - payload.iat!).toBe(300);
   });
 
   it('verifies against the published JWKS', async () => {
