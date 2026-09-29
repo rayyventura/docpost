@@ -784,7 +784,11 @@ export function DocumentsTree({ reveal, onSendHere }: DocumentsTreeProps) {
             {downloadError && <div className="error-banner">{downloadError}</div>}
             <div className="files-pane-body">
               {!selected || selected.kind === 'team' ? (
-                <p className="empty-state">Select a binder or folder to see its documents.</p>
+                <p className="empty-state">Select a folder to see its documents.</p>
+              ) : selected.kind === 'binder' && !selectedLoading && documents.length === 0 ? (
+                <p className="empty-state empty-state--compact">
+                  Select a folder in this binder to see its documents.
+                </p>
               ) : selectedLoading && !selectedContents ? (
                 <PageLoading label="Loading documents" />
               ) : documents.length === 0 ? (

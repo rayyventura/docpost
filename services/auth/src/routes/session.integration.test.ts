@@ -54,7 +54,7 @@ describe.skipIf(!process.env.INTEGRATION)('login, refresh, logout and JWKS (inte
   }
 
   describe('POST /auth/login', () => {
-    it('returns accessToken + refreshToken with expiresIn 900 and refreshExpiresIn 604800', async () => {
+    it('returns accessToken + refreshToken with expiresIn 300 and refreshExpiresIn 604800', async () => {
       const user = await h.registerUser();
       const res = await login(user.email, user.password);
 
@@ -62,7 +62,7 @@ describe.skipIf(!process.env.INTEGRATION)('login, refresh, logout and JWKS (inte
       expect(res.body).toEqual({
         accessToken: expect.any(String),
         refreshToken: expect.any(String),
-        expiresIn: 900,
+        expiresIn: 300,
         refreshExpiresIn: 604800,
       });
 
@@ -106,7 +106,7 @@ describe.skipIf(!process.env.INTEGRATION)('login, refresh, logout and JWKS (inte
         algorithms: ['RS256'],
       });
       expect(payload).toMatchObject({ sub: user.id, email: user.email, name: user.name });
-      expect(payload.exp! - payload.iat!).toBe(900);
+      expect(payload.exp! - payload.iat!).toBe(300);
     });
 
     it('advertises the JWKS URI via openid-configuration', async () => {
@@ -123,7 +123,7 @@ describe.skipIf(!process.env.INTEGRATION)('login, refresh, logout and JWKS (inte
 
       const rotated = await postJson<Session>(h.baseUrl, '/auth/refresh', { refreshToken: session.refreshToken });
       expect(rotated.status).toBe(200);
-      expect(rotated.body).toMatchObject({ expiresIn: 900, refreshExpiresIn: 604800 });
+      expect(rotated.body).toMatchObject({ expiresIn: 300, refreshExpiresIn: 604800 });
       expect(rotated.body.refreshToken).not.toBe(session.refreshToken);
       const { payload } = await jwtVerify(
         rotated.body.accessToken,

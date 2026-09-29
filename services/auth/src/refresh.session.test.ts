@@ -34,7 +34,7 @@ describe('issueUserSession', () => {
 
     const session = await issueUserSession(user);
 
-    expect(session.expiresIn).toBe(900);
+    expect(session.expiresIn).toBe(300);
     expect(session.refreshExpiresIn).toBe(604800);
     expect(session.refreshToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
@@ -72,7 +72,7 @@ describe('rotateUserSession', () => {
 
     const session = await rotateUserSession('old-token');
 
-    expect(session.expiresIn).toBe(900);
+    expect(session.expiresIn).toBe(300);
     expect(session.refreshExpiresIn).toBe(604800);
     expect(session.refreshToken).not.toBe('old-token');
     const { payload } = await jwtVerify(session.accessToken, getPublicKey());

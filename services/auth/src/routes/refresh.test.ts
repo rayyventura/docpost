@@ -38,7 +38,7 @@ describe('POST /auth/refresh', () => {
     const res = await postJson<Record<string, unknown>>(server.baseUrl, '/auth/refresh', { refreshToken: 'old' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ expiresIn: 900, refreshExpiresIn: 604800 });
+    expect(res.body).toMatchObject({ expiresIn: 300, refreshExpiresIn: 604800 });
     expect(res.body.refreshToken).not.toBe('old');
     const { payload } = await jwtVerify(res.body.accessToken as string, getPublicKey());
     expect(payload.sub).toBe(user.id);

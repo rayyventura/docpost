@@ -19,6 +19,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "latest",
     "@aws-sdk/client-sqs": "latest",
+    "@aws-sdk/s3-presigned-post": "^3.1142.0",
     "@aws-sdk/s3-request-presigner": "latest",
     "@docpost/shared": "*",
     "dotenv": "latest",

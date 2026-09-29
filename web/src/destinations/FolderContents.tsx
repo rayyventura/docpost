@@ -123,7 +123,11 @@ export function FolderContents({ id, type, onSelectFolder, onSendHere }: FolderC
     return (
       <ContentReveal>
         <div className="empty-state">
-          <p>No documents have been sent here yet.</p>
+          <p>
+            {type === 'binder'
+              ? 'Select a folder in this binder to see its documents.'
+              : 'No documents have been sent here yet.'}
+          </p>
           {type === 'folder' && onSendHere && (
             <button
               type="button"
